@@ -376,5 +376,75 @@ def generate_ci(platform: str, output: str, spec: str):
     click.echo()
 
 
+# ---------------------------------------------------------------------------
+# audit  (Phase 4)
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.argument("log_file", type=click.Path(exists=True))
+@click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]),
+              help="Output format (text or json)")
+@click.option("--run", "run_id", default=None,
+              help="Filter events by run ID")
+def audit(log_file: str, fmt: str, run_id: str):
+    """View and summarize a runtime audit log.
+
+    Reads a JSONL audit log produced by PolicyEnforcer and displays
+    enforcement events, violations, and aggregate stats.
+
+    Example:
+        cortex-protocol audit ./logs/audit_support-agent.jsonl
+        cortex-protocol audit audit.jsonl --format json
+        cortex-protocol audit audit.jsonl --run abc123def456
+    """
+    from .governance.audit import AuditLog
+
+    log = AuditLog.from_file(Path(log_file))
+    events = log.events_for_run(run_id) if run_id else log.events()
+
+    if fmt == "json":
+        summary = log.summary()
+        if run_id:
+            summary["filter_run_id"] = run_id
+            summary["total_events"] = len(events)
+            summary["violations"] = len([e for e in events if not e.allowed])
+        click.echo(json.dumps(summary, indent=2))
+        return
+
+    # Text output
+    summary = log.summary()
+    total = summary["total_events"]
+    violations = summary["violations"]
+
+    click.echo(f"\n  Audit Log: {log_file}")
+    click.echo(f"  Events: {total}  Violations: {violations}  Runs: {summary['runs']}")
+
+    if summary["policies_triggered"]:
+        click.echo(f"  Policies triggered: {', '.join(summary['policies_triggered'])}")
+
+    if run_id:
+        click.echo(f"  Filter: run_id={run_id} ({len(events)} events)")
+
+    click.echo()
+
+    for event in events:
+        color = "green" if event.allowed else "red"
+        icon = click.style("✓" if event.allowed else "✗", fg=color)
+        ts = event.timestamp[:19]  # trim microseconds
+        type_label = click.style(f"[{event.event_type}]", fg=color)
+        parts = [f"  {icon} {ts} {type_label}"]
+
+        if event.tool_name:
+            parts.append(f"tool={event.tool_name}")
+        if event.policy:
+            parts.append(f"policy={event.policy}")
+        if event.detail:
+            parts.append(event.detail)
+
+        click.echo("  ".join(parts))
+
+    click.echo()
+
+
 if __name__ == "__main__":
     main()
