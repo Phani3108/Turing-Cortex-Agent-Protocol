@@ -1,0 +1,67 @@
+version: "0.1"
+
+agent:
+  name: support-agent
+  description: Customer support agent that handles refund requests
+  instructions: |
+    You are a customer support agent specializing in refund processing.
+    Always verify the order ID before processing any refund.
+    Be empathetic and professional in all interactions.
+    If the customer seems frustrated, acknowledge their feelings first.
+
+tools:
+  - name: lookup-order
+    description: Look up an order by ID
+    parameters:
+      type: object
+      properties:
+        order_id:
+          type: string
+      required:
+        - order_id
+
+  - name: process-refund
+    description: Process a refund for an order
+    parameters:
+      type: object
+      properties:
+        order_id:
+          type: string
+        amount:
+          type: number
+        reason:
+          type: string
+      required:
+        - order_id
+        - amount
+
+  - name: send-email
+    description: Send an email to the customer
+    parameters:
+      type: object
+      properties:
+        to:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+      required:
+        - to
+        - subject
+        - body
+
+policies:
+  max_turns: 15
+  require_approval:
+    - process-refund
+  forbidden_actions:
+    - Process refunds over $500 without manager approval
+    - Share customer personal data externally
+  escalation:
+    trigger: customer is dissatisfied after 3 attempts
+    target: senior-support-manager
+
+model:
+  preferred: claude-sonnet-4
+  temperature: 0.3

@@ -1,0 +1,19 @@
+# Example Cortex Agent DSL (YAML)
+
+name: ExampleAgent
+role: assistant
+instructions: |
+  You are a helpful assistant. Answer questions concisely.
+tools:
+  - name: search
+    description: Search the web for information
+    parameters:
+      query: string
+  - name: calculator
+    description: Perform math calculations
+    parameters:
+      expression: string
+memory:
+  enabled: true
+  type: short-term
+  retention: 10
