@@ -1,4 +1,4 @@
-"""Cortex Protocol CLI — init, validate, compile, lint, diff, list-targets, list-packs, install, generate-ci."""
+"""Cortex Protocol CLI — 15 commands for agent specification, governance, and network orchestration."""
 
 from __future__ import annotations
 
@@ -562,6 +562,138 @@ def registry_list(registry_dir: str):
     for meta in agents:
         versions = ", ".join(v.version for v in meta.versions)
         click.echo(f"  {meta.name:<28} latest: {meta.latest}  versions: [{versions}]")
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# compile-network  (Phase 6)
+# ---------------------------------------------------------------------------
+
+@main.command("compile-network")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--target", "-t", default="langgraph",
+              type=click.Choice(["langgraph", "openai-sdk", "system-prompt"]),
+              help="Target runtime for the multi-agent network")
+@click.option("--output", "-o", default=None,
+              help="Output file path (default: stdout)")
+@click.option("--a2a-cards", "a2a_cards", is_flag=True, default=False,
+              help="Also generate A2A agent cards for each agent")
+@click.option("--base-url", default="http://localhost",
+              help="Base URL for A2A agent cards")
+def compile_network(file: str, target: str, output: str, a2a_cards: bool, base_url: str):
+    """Compile a multi-agent network spec into orchestration code.
+
+    Takes a network YAML file that defines multiple agents, their routes,
+    shared tools, and policies — and generates a multi-agent scaffold.
+
+    Example:
+        cortex-protocol compile-network network.yaml --target langgraph
+        cortex-protocol compile-network network.yaml --target openai-sdk -o network.py
+        cortex-protocol compile-network network.yaml --a2a-cards
+    """
+    from .network.models import NetworkSpec
+    from .network.graph import validate_network, compile_network as _compile, resolve_agent_specs
+    from .network.a2a import generate_network_a2a_cards
+
+    try:
+        network = NetworkSpec.from_yaml(file)
+    except Exception as e:
+        click.echo(f"Error parsing network spec: {e}", err=True)
+        sys.exit(1)
+
+    # Validate
+    result = validate_network(network)
+    if not result.valid:
+        click.echo("Network validation failed:", err=True)
+        for err in result.errors:
+            click.echo(f"  ERROR: {err}", err=True)
+        sys.exit(1)
+
+    for warning in result.warnings:
+        click.echo(f"  WARNING: {warning}", err=True)
+
+    # Resolve agent specs from file paths
+    base_dir = Path(file).parent
+    agent_specs = resolve_agent_specs(network, base_dir)
+    resolved_count = sum(1 for s in agent_specs.values() if s is not None)
+
+    # Compile
+    code = _compile(network, target=target, agent_specs=agent_specs)
+
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(code)
+        click.echo(f"Compiled network '{network.name}' → {output}")
+    else:
+        click.echo(code)
+
+    click.echo(f"\n  Network: {network.name} ({len(network.agents)} agents, {len(network.routes)} routes)")
+    click.echo(f"  Target: {target}")
+    click.echo(f"  Resolved specs: {resolved_count}/{len(network.agents)}")
+
+    # A2A cards
+    if a2a_cards:
+        cards = generate_network_a2a_cards(network, agent_specs, base_url=base_url)
+        cards_dir = Path(output).parent / "a2a_cards" if output else Path("a2a_cards")
+        cards_dir.mkdir(parents=True, exist_ok=True)
+
+        for name, card in cards.items():
+            card_path = cards_dir / f"{name}.agent.json"
+            card_path.write_text(json.dumps(card, indent=2))
+            click.echo(f"  A2A card: {card_path}")
+
+        click.echo(f"\n  Generated {len(cards)} A2A agent cards → {cards_dir}/")
+
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# generate-a2a  (Phase 6)
+# ---------------------------------------------------------------------------
+
+@main.command("generate-a2a")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--framework", "-f", default="fastapi",
+              type=click.Choice(["fastapi", "flask"]),
+              help="Web framework for the A2A handler")
+@click.option("--output", "-o", default=None,
+              help="Output file path (default: a2a_server.py)")
+@click.option("--url", default="http://localhost:8000",
+              help="Base URL for the agent card")
+def generate_a2a(file: str, framework: str, output: str, url: str):
+    """Generate an A2A (Agent-to-Agent) server from an agent spec.
+
+    Creates a web server that implements Google's A2A protocol,
+    with agent card discovery and JSON-RPC task endpoints.
+
+    Example:
+        cortex-protocol generate-a2a agent.yaml
+        cortex-protocol generate-a2a agent.yaml --framework flask
+        cortex-protocol generate-a2a agent.yaml --url https://my-agent.example.com
+    """
+    from .validator import validate_file
+    from .network.a2a import generate_a2a_handler, generate_a2a_card_json
+
+    spec, errors = validate_file(file)
+    if errors:
+        click.echo("Validation failed:", err=True)
+        for err in errors:
+            click.echo(f"  - {err}", err=True)
+        sys.exit(1)
+
+    handler_code = generate_a2a_handler(spec, framework=framework)
+    out_path = Path(output) if output else Path("a2a_server.py")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(handler_code)
+
+    click.echo(f"\n  Generated A2A server: {out_path}")
+    click.echo(f"  Framework: {framework}")
+    click.echo(f"  Agent: {spec.agent.name}")
+    click.echo(f"  Skills: {len(spec.tools)}")
+    click.echo(f"\n  Run: uvicorn {out_path.stem}:app --reload" if framework == "fastapi"
+               else f"\n  Run: python {out_path}")
+    click.echo(f"  Card: {url}/.well-known/agent.json")
     click.echo()
 
 
