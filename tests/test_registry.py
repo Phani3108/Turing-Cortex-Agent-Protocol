@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from cortex_protocol.registry import (
+from cortex_protocol.packs import (
     PACK_REGISTRY,
     install_pack,
     get_pack_spec_content,

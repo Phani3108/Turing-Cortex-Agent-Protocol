@@ -1,9 +1,9 @@
-"""Pydantic models for Cortex Protocol v0.1 agent specification."""
+"""Pydantic models for Cortex Protocol agent specification (v0.1 + v0.3 extensions)."""
 
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -23,6 +23,7 @@ class ToolSpec(BaseModel):
     name: str
     description: str
     parameters: ToolParameter = Field(default_factory=ToolParameter)
+    mcp: Optional[str] = None  # v0.3: MCP server reference, e.g. "mcp-server-atlassian@2.1.0"
 
 
 class EscalationPolicy(BaseModel):
@@ -57,6 +58,15 @@ class AgentIdentity(BaseModel):
     instructions: str
 
 
+class AgentMetadata(BaseModel):
+    """Queryable metadata for registry discovery (v0.3)."""
+
+    owner: str = ""
+    tags: list[str] = Field(default_factory=list)
+    compliance: list[str] = Field(default_factory=list)
+    environment: str = ""
+
+
 class AgentSpec(BaseModel):
     """Root specification for a Cortex Protocol agent."""
 
@@ -65,22 +75,21 @@ class AgentSpec(BaseModel):
     tools: list[ToolSpec] = Field(default_factory=list)
     policies: PolicySpec = Field(default_factory=PolicySpec)
     model: ModelConfig = Field(default_factory=ModelConfig)
+    metadata: Optional[AgentMetadata] = None  # v0.3
+    extends: Optional[str] = None  # v0.3: base spec reference, e.g. "@org/base-agent@^2.0"
 
     @classmethod
     def from_yaml(cls, path: str) -> AgentSpec:
-        """Load an agent spec from a YAML file."""
         with open(path) as f:
             data = yaml.safe_load(f)
         return cls.model_validate(data)
 
     @classmethod
     def from_yaml_str(cls, text: str) -> AgentSpec:
-        """Load an agent spec from a YAML string."""
         data = yaml.safe_load(text)
         return cls.model_validate(data)
 
     def to_yaml(self) -> str:
-        """Serialize the spec to YAML."""
         return yaml.dump(
             self.model_dump(exclude_none=True),
             default_flow_style=False,
@@ -88,5 +97,4 @@ class AgentSpec(BaseModel):
         )
 
     def to_json_schema(self) -> str:
-        """Export the JSON Schema for validation."""
-        return json.dumps(cls.model_json_schema(), indent=2)
+        return json.dumps(self.model_json_schema(), indent=2)

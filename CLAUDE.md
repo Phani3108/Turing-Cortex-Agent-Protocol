@@ -26,3 +26,10 @@
 - No em dashes, smart quotes, or decorative Unicode symbols.
 - Plain hyphens and straight quotes only.
 - Code output must be copy-paste safe.
+
+## Model Handoff Protocol
+- **Opus 4.6**: Strategy, architecture, competitive analysis, "what to build and why" decisions, spec design, API surface design, framing ambiguous problems.
+- **Sonnet 4.6**: Implementation, tests, debugging, CLI commands, file edits, anything where the output is code.
+- **Handoff signal from Opus to Sonnet** (verbatim): "Architecture decided. Switch to Sonnet 4.6. First task: [exact file + exact thing to build]."
+- **Handoff signal from Sonnet to Opus**: "Hit a design ambiguity that the plan doesn't resolve. Switch to Opus 4.6. Question: [exact question]."
+- When in doubt: if the next action is writing code, stay on Sonnet. If the next action is deciding what code to write, switch to Opus.

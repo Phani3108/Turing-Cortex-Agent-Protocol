@@ -293,7 +293,7 @@ def list_targets():
 @main.command("list-packs")
 def list_packs():
     """List available agent packs from the built-in registry."""
-    from .registry import PACK_REGISTRY
+    from .packs import PACK_REGISTRY
 
     click.echo("\n  Available packs:\n")
     for pack in PACK_REGISTRY:
@@ -319,7 +319,7 @@ def install(pack_name: str, output: str):
         cortex-protocol install incident-response
         cortex-protocol install customer-support --output ./agents
     """
-    from .registry import install_pack
+    from .packs import install_pack
 
     out_dir = Path(output)
     installed = install_pack(pack_name, out_dir)
@@ -443,6 +443,125 @@ def audit(log_file: str, fmt: str, run_id: str):
 
         click.echo("  ".join(parts))
 
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# publish  (Phase 3)
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--version", "-v", "ver", required=True,
+              help="Semver version to publish (e.g. 1.0.0)")
+@click.option("--registry-dir", default=None,
+              help="Custom registry directory (default: ~/.cortex-protocol/registry)")
+def publish(file: str, ver: str, registry_dir: str):
+    """Publish an agent spec to the local registry with a semver version.
+
+    Example:
+        cortex-protocol publish agent.yaml --version 1.0.0
+        cortex-protocol publish agent.yaml -v 2.0.0
+    """
+    from .validator import validate_file
+    from .registry.local import LocalRegistry
+
+    spec, errors = validate_file(file)
+    if errors:
+        click.echo("Validation failed:", err=True)
+        for err in errors:
+            click.echo(f"  - {err}", err=True)
+        sys.exit(1)
+
+    reg = LocalRegistry(Path(registry_dir)) if registry_dir else LocalRegistry()
+    try:
+        path = reg.publish(spec, ver)
+        click.echo(f"Published {spec.agent.name}@{ver} -> {path}")
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# search  (Phase 3)
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.option("--tag", "-t", multiple=True, help="Filter by tag")
+@click.option("--compliance", "-c", multiple=True, help="Filter by compliance standard")
+@click.option("--owner", "-o", default=None, help="Filter by owner")
+@click.option("--name", "-n", default=None, help="Filter by name substring")
+@click.option("--registry-dir", default=None, help="Custom registry directory")
+@click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]))
+def search(tag, compliance, owner, name, registry_dir, fmt):
+    """Search the registry for agents by metadata.
+
+    Example:
+        cortex-protocol search --tag payment
+        cortex-protocol search --compliance pci-dss --format json
+        cortex-protocol search --owner platform-team
+    """
+    from .registry.local import LocalRegistry
+
+    reg = LocalRegistry(Path(registry_dir)) if registry_dir else LocalRegistry()
+    results = reg.search(
+        tags=list(tag) if tag else None,
+        compliance=list(compliance) if compliance else None,
+        owner=owner,
+        name_contains=name,
+    )
+
+    if fmt == "json":
+        out = [
+            {
+                "name": meta.name,
+                "version": meta.latest,
+                "description": spec.agent.description,
+                "owner": spec.metadata.owner if spec.metadata else "",
+                "tags": spec.metadata.tags if spec.metadata else [],
+            }
+            for meta, spec in results
+        ]
+        click.echo(json.dumps(out, indent=2))
+        return
+
+    if not results:
+        click.echo("  No agents found matching criteria.")
+        return
+
+    click.echo(f"\n  Found {len(results)} agent(s):\n")
+    for meta, spec in results:
+        click.echo(f"  {meta.name}@{meta.latest}")
+        click.echo(f"    {spec.agent.description}")
+        if spec.metadata:
+            if spec.metadata.tags:
+                click.echo(f"    tags: {', '.join(spec.metadata.tags)}")
+            if spec.metadata.owner:
+                click.echo(f"    owner: {spec.metadata.owner}")
+        click.echo()
+
+
+# ---------------------------------------------------------------------------
+# registry-list  (Phase 3)
+# ---------------------------------------------------------------------------
+
+@main.command("registry-list")
+@click.option("--registry-dir", default=None, help="Custom registry directory")
+def registry_list(registry_dir: str):
+    """List all agents in the local registry."""
+    from .registry.local import LocalRegistry
+
+    reg = LocalRegistry(Path(registry_dir)) if registry_dir else LocalRegistry()
+    agents = reg.list_agents()
+
+    if not agents:
+        click.echo("  Registry is empty. Publish with: cortex-protocol publish <file> -v 1.0.0")
+        return
+
+    click.echo(f"\n  {len(agents)} agent(s) in registry:\n")
+    for meta in agents:
+        versions = ", ".join(v.version for v in meta.versions)
+        click.echo(f"  {meta.name:<28} latest: {meta.latest}  versions: [{versions}]")
     click.echo()
 
 
