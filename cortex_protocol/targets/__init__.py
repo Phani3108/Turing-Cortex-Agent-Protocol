@@ -6,6 +6,7 @@ from .openai_sdk import OpenAISDKTarget
 from .claude_sdk import ClaudeSDKTarget
 from .crewai import CrewAITarget
 from .langgraph import LangGraphTarget
+from .semantic_kernel import SemanticKernelTarget
 
 TARGET_REGISTRY: dict[str, type[CompilationTarget]] = {
     "system-prompt": SystemPromptTarget,
@@ -13,6 +14,7 @@ TARGET_REGISTRY: dict[str, type[CompilationTarget]] = {
     "claude-sdk": ClaudeSDKTarget,
     "crewai": CrewAITarget,
     "langgraph": LangGraphTarget,
+    "semantic-kernel": SemanticKernelTarget,
 }
 
 __all__ = [
@@ -24,4 +26,5 @@ __all__ = [
     "ClaudeSDKTarget",
     "CrewAITarget",
     "LangGraphTarget",
+    "SemanticKernelTarget",
 ]
