@@ -6,6 +6,7 @@ import json
 
 from ..compiler import compile_system_prompt
 from ..models import AgentSpec
+from ..network.mcp import generate_mcp_client_code
 from .base import CompilationTarget, OutputFile
 
 
@@ -60,6 +61,17 @@ class ClaudeSDKTarget(CompilationTarget):
         lines.append("")
         lines.append("")
 
+        # MCP setup block if any tools use MCP
+        mcp_tools = [t for t in spec.tools if t.mcp]
+        if mcp_tools:
+            lines.append("# ── MCP Setup ────────────────────────────────────────────────────────")
+            lines.append("")
+            seen_servers: set[str] = set()
+            for tool in mcp_tools:
+                mcp_code = generate_mcp_client_code("claude-sdk", tool.name, tool.mcp)
+                lines.append(mcp_code["setup"])
+                lines.append("")
+
         # Build tool handlers
         lines.append("# ── Tool Handlers ────────────────────────────────────────────────────")
         lines.append("")
@@ -70,14 +82,21 @@ class ClaudeSDKTarget(CompilationTarget):
             handler_name = f"handle_{func_name}"
             handler_names.append(handler_name)
 
-            lines.append(f"def {handler_name}(tool_input: dict) -> str:")
-            lines.append(f'    """{tool.description}"""')
-            for pname in tool.parameters.properties:
-                lines.append(f'    {pname} = tool_input.get("{pname}")')
-            lines.append(f"    # TODO: Implement {tool.name}")
-            lines.append(f'    return "{tool.name} executed"')
-            lines.append("")
-            lines.append("")
+            if tool.mcp:
+                mcp_code = generate_mcp_client_code("claude-sdk", tool.name, tool.mcp)
+                for call_line in mcp_code["call"].split("\n"):
+                    lines.append(call_line)
+                lines.append("")
+                lines.append("")
+            else:
+                lines.append(f"def {handler_name}(tool_input: dict) -> str:")
+                lines.append(f'    """{tool.description}"""')
+                for pname in tool.parameters.properties:
+                    lines.append(f'    {pname} = tool_input.get("{pname}")')
+                lines.append(f"    # TODO: Implement {tool.name}")
+                lines.append(f'    return "{tool.name} executed"')
+                lines.append("")
+                lines.append("")
 
         # Build dispatch map
         lines.append("TOOL_DISPATCH = {")

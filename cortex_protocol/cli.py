@@ -456,12 +456,15 @@ def audit(log_file: str, fmt: str, run_id: str):
               help="Semver version to publish (e.g. 1.0.0)")
 @click.option("--registry-dir", default=None,
               help="Custom registry directory (default: ~/.cortex-protocol/registry)")
-def publish(file: str, ver: str, registry_dir: str):
-    """Publish an agent spec to the local registry with a semver version.
+@click.option("--remote", default=None,
+              help="Remote GitHub registry, e.g. github:owner/repo")
+def publish(file: str, ver: str, registry_dir: str, remote: str):
+    """Publish an agent spec to the local or remote registry.
 
     Example:
         cortex-protocol publish agent.yaml --version 1.0.0
         cortex-protocol publish agent.yaml -v 2.0.0
+        cortex-protocol publish agent.yaml -v 1.0.0 --remote github:Phani3108/cortex-agents
     """
     from .validator import validate_file
     from .registry.local import LocalRegistry
@@ -473,13 +476,24 @@ def publish(file: str, ver: str, registry_dir: str):
             click.echo(f"  - {err}", err=True)
         sys.exit(1)
 
-    reg = LocalRegistry(Path(registry_dir)) if registry_dir else LocalRegistry()
-    try:
-        path = reg.publish(spec, ver)
-        click.echo(f"Published {spec.agent.name}@{ver} -> {path}")
-    except ValueError as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
+    if remote:
+        from .registry.remote import RemoteRegistry
+        repo = remote.removeprefix("github:")
+        reg = RemoteRegistry(repo)
+        try:
+            url = reg.publish(spec, ver)
+            click.echo(f"Published {spec.agent.name}@{ver} -> {url}")
+        except Exception as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+    else:
+        reg = LocalRegistry(Path(registry_dir)) if registry_dir else LocalRegistry()
+        try:
+            path = reg.publish(spec, ver)
+            click.echo(f"Published {spec.agent.name}@{ver} -> {path}")
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -492,15 +506,41 @@ def publish(file: str, ver: str, registry_dir: str):
 @click.option("--owner", "-o", default=None, help="Filter by owner")
 @click.option("--name", "-n", default=None, help="Filter by name substring")
 @click.option("--registry-dir", default=None, help="Custom registry directory")
+@click.option("--remote", default=None, help="Remote GitHub registry, e.g. github:owner/repo")
 @click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]))
-def search(tag, compliance, owner, name, registry_dir, fmt):
+def search(tag, compliance, owner, name, registry_dir, remote, fmt):
     """Search the registry for agents by metadata.
 
     Example:
         cortex-protocol search --tag payment
         cortex-protocol search --compliance pci-dss --format json
         cortex-protocol search --owner platform-team
+        cortex-protocol search --tag payment --remote github:Phani3108/cortex-agents
     """
+    if remote:
+        from .registry.remote import RemoteRegistry
+        repo = remote.removeprefix("github:")
+        reg = RemoteRegistry(repo)
+        results_list = reg.search(
+            tags=list(tag) if tag else None,
+            compliance=list(compliance) if compliance else None,
+            owner=owner,
+            name_contains=name,
+        )
+        if fmt == "json":
+            click.echo(json.dumps(results_list, indent=2))
+            return
+        if not results_list:
+            click.echo("  No agents found matching criteria.")
+            return
+        click.echo(f"\n  Found {len(results_list)} agent(s):\n")
+        for r in results_list:
+            click.echo(f"  {r['name']}@{r['version']}")
+            click.echo(f"    {r['description']}")
+            if r.get("tags"):
+                click.echo(f"    tags: {', '.join(r['tags'])}")
+        return
+
     from .registry.local import LocalRegistry
 
     reg = LocalRegistry(Path(registry_dir)) if registry_dir else LocalRegistry()
@@ -695,6 +735,79 @@ def generate_a2a(file: str, framework: str, output: str, url: str):
                else f"\n  Run: python {out_path}")
     click.echo(f"  Card: {url}/.well-known/agent.json")
     click.echo()
+
+
+# ---------------------------------------------------------------------------
+# compliance-report  (Phase 10)
+# ---------------------------------------------------------------------------
+
+@main.command("compliance-report")
+@click.argument("log_file", type=click.Path(exists=True))
+@click.option("--standard", default="general",
+              type=click.Choice(["general", "soc2", "gdpr"]),
+              help="Compliance standard to map to")
+@click.option("--output", "-o", default=None,
+              help="Write report to file instead of stdout")
+@click.option("--agent-version", default="", help="Agent version to include in report")
+def compliance_report(log_file: str, standard: str, output: str, agent_version: str):
+    """Generate a compliance report from an audit log.
+
+    Example:
+        cortex-protocol compliance-report audit.jsonl
+        cortex-protocol compliance-report audit.jsonl --standard soc2
+        cortex-protocol compliance-report audit.jsonl --output report.md
+    """
+    from .governance.audit import AuditLog
+    from .governance.compliance import generate_compliance_report
+
+    log = AuditLog.from_file(Path(log_file))
+    report = generate_compliance_report(log, standard=standard, agent_version=agent_version)
+
+    if output:
+        Path(output).write_text(report)
+        click.echo(f"Compliance report ({standard}) -> {output}")
+    else:
+        click.echo(report)
+
+
+# ---------------------------------------------------------------------------
+# migrate  (Phase 9)
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--output", "-o", default=None,
+              help="Write migrated spec to this file instead of in-place")
+def migrate(file: str, output: str):
+    """Migrate an agent spec to the latest schema version.
+
+    Migrates in-place with a .bak backup unless --output is given.
+
+    Example:
+        cortex-protocol migrate agent.yaml
+        cortex-protocol migrate agent.yaml --output agent_v3.yaml
+    """
+    import shutil
+    import yaml as _yaml
+    from .migrations import migrate as _migrate
+
+    with open(file) as f:
+        spec_dict = _yaml.safe_load(f)
+
+    original_version = spec_dict.get("version", "0.1")
+    migrated = _migrate(spec_dict)
+    new_version = migrated.get("version", "0.1")
+
+    content = _yaml.dump(migrated, default_flow_style=False, sort_keys=False)
+
+    if output:
+        Path(output).write_text(content)
+        click.echo(f"Migrated {file} ({original_version} -> {new_version}) -> {output}")
+    else:
+        backup = file + ".bak"
+        shutil.copy2(file, backup)
+        Path(file).write_text(content)
+        click.echo(f"Migrated {file} ({original_version} -> {new_version}) [backup: {backup}]")
 
 
 if __name__ == "__main__":

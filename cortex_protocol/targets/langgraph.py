@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ..compiler import compile_system_prompt
 from ..models import AgentSpec
+from ..network.mcp import generate_mcp_client_code, parse_mcp_ref
 from .base import CompilationTarget, OutputFile
 
 
@@ -47,6 +48,11 @@ class LangGraphTarget(CompilationTarget):
         lines.append("from langgraph.graph.message import add_messages")
         lines.append("from langgraph.prebuilt import ToolNode")
         lines.append("from pydantic import BaseModel, Field")
+
+        mcp_tools = [t for t in spec.tools if t.mcp]
+        if mcp_tools:
+            lines.append("from langchain_mcp_adapters.client import MultiServerMCPClient")
+
         lines.append("")
         lines.append("")
         lines.append("# ── State ────────────────────────────────────────────────────────────")
@@ -58,8 +64,22 @@ class LangGraphTarget(CompilationTarget):
         lines.append("# ── Tools ────────────────────────────────────────────────────────────")
         lines.append("")
 
+        mcp_tools = [t for t in spec.tools if t.mcp]
+        local_tools = [t for t in spec.tools if not t.mcp]
+
+        # MCP client setup
+        if mcp_tools:
+            seen_servers: set[str] = set()
+            for t in mcp_tools:
+                server_name, _ = parse_mcp_ref(t.mcp)
+                if server_name not in seen_servers:
+                    seen_servers.add(server_name)
+                    mcp_code = generate_mcp_client_code("langgraph", t.name, t.mcp)
+                    lines.append(mcp_code["setup"])
+                    lines.append("")
+
         tool_names: list[str] = []
-        for t in spec.tools:
+        for t in local_tools:
             func_name = _to_snake(t.name)
             tool_names.append(func_name)
 
@@ -90,8 +110,22 @@ class LangGraphTarget(CompilationTarget):
             lines.append("")
             lines.append("")
 
+        for t in mcp_tools:
+            func_name = _to_snake(t.name)
+            tool_names.append(func_name)
+            mcp_code = generate_mcp_client_code("langgraph", t.name, t.mcp)
+            lines.append(f'@tool("{t.name}")')
+            lines.append(f"def {func_name}(input: str) -> str:")
+            lines.append(f'    """{t.description}"""')
+            lines.append(f"    {mcp_code['call']}")
+            lines.append(f'    return "{t.name} called via MCP"')
+            lines.append("")
+            lines.append("")
+
         tools_list_str = ", ".join(tool_names)
         lines.append(f"tools = [{tools_list_str}]")
+        if mcp_tools:
+            lines.append("# mcp_tools = await mcp_client.get_tools(); tools = tools + mcp_tools")
         lines.append("")
 
         # Human-in-the-loop comment for approval-required tools
@@ -165,9 +199,11 @@ class LangGraphTarget(CompilationTarget):
         else:
             extra = "langchain-openai>=0.3\n"
 
+        mcp_extra = "langchain-mcp-adapters>=0.1\n" if any(t.mcp for t in spec.tools) else ""
+
         return OutputFile(
             path="requirements.txt",
-            content=f"langgraph>=0.2\nlangchain-core>=0.3\n{extra}",
+            content=f"langgraph>=0.2\nlangchain-core>=0.3\n{extra}{mcp_extra}",
             description="Python dependencies",
         )
 

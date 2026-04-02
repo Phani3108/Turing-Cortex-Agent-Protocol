@@ -3,6 +3,7 @@
 import ast
 import pytest
 
+from cortex_protocol.models import AgentSpec
 from cortex_protocol.targets.semantic_kernel import SemanticKernelTarget
 from tests.conftest import basic_spec, policy_spec
 
@@ -117,3 +118,44 @@ class TestSemanticKernelAllTools:
         agent_py = next(f for f in files if f.path == "agent.py").content
         for tool in basic_spec.tools:
             assert tool.description in agent_py
+
+
+class TestSemanticKernelMCP:
+    def _mcp_spec(self):
+        return AgentSpec.from_yaml_str("""
+version: "0.3"
+agent:
+  name: mcp-sk-agent
+  description: SK agent with MCP
+  instructions: Test
+tools:
+  - name: gh-file
+    description: Get GitHub file
+    mcp: "mcp-server-github@1.0.0"
+  - name: local-fn
+    description: Local function
+""")
+
+    def test_mcp_plugin_setup_in_build_kernel(self):
+        spec = self._mcp_spec()
+        files = SemanticKernelTarget().compile(spec)
+        agent_py = next(f for f in files if f.path == "agent.py").content
+        assert "MCPStdioPlugin" in agent_py
+
+    def test_mcp_server_name_in_output(self):
+        spec = self._mcp_spec()
+        files = SemanticKernelTarget().compile(spec)
+        agent_py = next(f for f in files if f.path == "agent.py").content
+        assert "mcp-server-github" in agent_py
+
+    def test_non_mcp_tool_still_in_plugin(self):
+        spec = self._mcp_spec()
+        files = SemanticKernelTarget().compile(spec)
+        agent_py = next(f for f in files if f.path == "agent.py").content
+        assert "local_fn" in agent_py
+
+    def test_mcp_requirements_has_mcp_extra(self):
+        spec = self._mcp_spec()
+        files = SemanticKernelTarget().compile(spec)
+        reqs = next(f for f in files if f.path == "requirements.txt").content
+        assert "semantic-kernel[mcp]" in reqs

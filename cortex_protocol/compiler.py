@@ -51,7 +51,8 @@ def _build_sections(spec: AgentSpec) -> dict[str, list[str]]:
             if tool.parameters.properties:
                 param_names = ", ".join(tool.parameters.properties.keys())
                 params = f" (parameters: {param_names})"
-            tool_lines.append(f"{tool.name}: {tool.description}{params}")
+            mcp_note = f" [via MCP: {tool.mcp}]" if tool.mcp else ""
+            tool_lines.append(f"{tool.name}: {tool.description}{params}{mcp_note}")
         sections["tools"] = tool_lines
 
     # Policies

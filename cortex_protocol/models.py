@@ -98,3 +98,44 @@ class AgentSpec(BaseModel):
 
     def to_json_schema(self) -> str:
         return json.dumps(self.model_json_schema(), indent=2)
+
+
+def merge_specs(base: "AgentSpec", override: "AgentSpec") -> "AgentSpec":
+    """Merge two specs: override wins on conflicts, lists are combined."""
+    # Instructions: concatenate
+    if base.agent.instructions and override.agent.instructions:
+        merged_instructions = base.agent.instructions + "\n\n" + override.agent.instructions
+    else:
+        merged_instructions = override.agent.instructions or base.agent.instructions
+
+    merged_agent = AgentIdentity(
+        name=override.agent.name,
+        description=override.agent.description,
+        instructions=merged_instructions,
+    )
+
+    # Tools: base + override, override wins on name conflict
+    base_tools_by_name = {t.name: t for t in base.tools}
+    override_tools_by_name = {t.name: t for t in override.tools}
+    merged_tools_dict = {**base_tools_by_name, **override_tools_by_name}
+    merged_tools = list(merged_tools_dict.values())
+
+    # Policies: override wins field by field, lists merged
+    base_p = base.policies
+    over_p = override.policies
+    merged_policies = PolicySpec(
+        max_turns=over_p.max_turns if over_p.max_turns is not None else base_p.max_turns,
+        require_approval=list(set(base_p.require_approval) | set(over_p.require_approval)),
+        forbidden_actions=list(set(base_p.forbidden_actions) | set(over_p.forbidden_actions)),
+        escalation=over_p.escalation if over_p.escalation.trigger else base_p.escalation,
+    )
+
+    return AgentSpec(
+        version=override.version,
+        agent=merged_agent,
+        tools=merged_tools,
+        policies=merged_policies,
+        model=override.model,
+        metadata=override.metadata or base.metadata,
+        extends=None,
+    )

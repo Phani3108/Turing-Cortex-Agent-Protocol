@@ -10,6 +10,7 @@ import re
 from typing import Optional
 
 from .local import LocalRegistry, AgentMeta, _parse_semver
+from ..models import AgentSpec, merge_specs
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +106,51 @@ def resolve_version(
 
     matching.sort(key=_parse_semver, reverse=True)
     return matching[0]
+
+
+# ---------------------------------------------------------------------------
+# Extends resolution
+# ---------------------------------------------------------------------------
+
+def _parse_extends_ref(extends_str: str) -> tuple[str, str]:
+    """Parse '@org/name@version' or 'name@version' or 'name'.
+
+    Returns (name, version_spec) where version_spec may be 'latest'.
+    """
+    s = extends_str.strip()
+    # Strip leading @org/ prefix
+    if s.startswith("@"):
+        parts = s[1:].split("/", 1)
+        if len(parts) == 2:
+            s = parts[1]
+        else:
+            s = parts[0]
+    # Now split name@version
+    if "@" in s:
+        name, version_spec = s.rsplit("@", 1)
+    else:
+        name, version_spec = s, "latest"
+    return name, version_spec
+
+
+def resolve_extends(spec: AgentSpec, registry: LocalRegistry) -> AgentSpec:
+    """Resolve spec.extends from registry and merge into spec.
+
+    Returns merged spec. If base not found, returns spec unchanged.
+    """
+    if not spec.extends:
+        return spec
+
+    name, version_spec = _parse_extends_ref(spec.extends)
+    concrete = resolve_version(registry, name, version_spec)
+    if concrete is None:
+        return spec
+
+    base = registry.get(name, concrete)
+    if base is None:
+        return spec
+
+    return merge_specs(base, spec)
 
 
 # ---------------------------------------------------------------------------

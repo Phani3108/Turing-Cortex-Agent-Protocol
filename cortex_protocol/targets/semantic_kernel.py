@@ -14,6 +14,7 @@ from __future__ import annotations
 from .base import CompilationTarget, OutputFile
 from ..models import AgentSpec
 from ..compiler import compile_system_prompt
+from ..network.mcp import generate_mcp_client_code
 
 
 def _to_pascal(name: str) -> str:
@@ -144,6 +145,15 @@ class SemanticKernelTarget(CompilationTarget):
         lines.append("    kernel.add_service(service)")
         lines.append("")
         lines.append(f"    kernel.add_plugin({plugin_class}(), plugin_name=\"{_to_snake(spec.agent.name)}\")")
+
+        # MCP plugin setup
+        for tool in spec.tools:
+            if tool.mcp:
+                mcp_code = generate_mcp_client_code("semantic-kernel", tool.name, tool.mcp)
+                lines.append(f"    from semantic_kernel.connectors.mcp import MCPStdioPlugin")
+                lines.append(f"    {mcp_code['setup']}")
+                lines.append(f"    # kernel.add_plugin({_to_snake(tool.name)}_plugin)")
+
         lines.append("    return kernel")
         lines.append("")
         lines.append("")
@@ -208,6 +218,8 @@ class SemanticKernelTarget(CompilationTarget):
         else:
             lines.append("azure-identity>=1.15.0")
         lines.append("python-dotenv>=1.0.0")
+        if any(t.mcp for t in spec.tools):
+            lines.append("semantic-kernel[mcp]>=1.0.0")
         return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------------

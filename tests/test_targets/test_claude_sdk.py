@@ -2,6 +2,7 @@
 
 import ast
 
+from cortex_protocol.models import AgentSpec
 from cortex_protocol.targets.claude_sdk import ClaudeSDKTarget
 
 
@@ -65,3 +66,44 @@ def test_policy_agent_compiles(policy_spec):
     files = target.compile(policy_spec)
     agent_py = next(f for f in files if f.path == "agent.py")
     ast.parse(agent_py.content)
+
+
+def _make_mcp_spec():
+    return AgentSpec.from_yaml_str("""
+version: "0.3"
+agent:
+  name: mcp-claude-agent
+  description: Claude agent with MCP
+  instructions: Test
+tools:
+  - name: github-tool
+    description: GitHub via MCP
+    mcp: "mcp-server-github@1.0.0"
+  - name: local-handler
+    description: A local tool
+""")
+
+
+def test_mcp_generates_handler_with_mcp_call():
+    spec = _make_mcp_spec()
+    target = ClaudeSDKTarget()
+    files = target.compile(spec)
+    agent_py = next(f for f in files if f.path == "agent.py")
+    assert "mcp-server-github" in agent_py.content
+    assert "handle_github_tool" in agent_py.content
+
+
+def test_non_mcp_tool_still_gets_todo_stub():
+    spec = _make_mcp_spec()
+    target = ClaudeSDKTarget()
+    files = target.compile(spec)
+    agent_py = next(f for f in files if f.path == "agent.py")
+    assert "# TODO: Implement local-handler" in agent_py.content
+
+
+def test_mcp_setup_block_present():
+    spec = _make_mcp_spec()
+    target = ClaudeSDKTarget()
+    files = target.compile(spec)
+    agent_py = next(f for f in files if f.path == "agent.py")
+    assert "MCP Setup" in agent_py.content or "MCP server" in agent_py.content

@@ -1,405 +1,209 @@
-# 🧬 Cortex Protocol
+# Cortex Protocol
 
-**Define an agent once. Compile to any runtime.**
+> Define your AI agent once. Enforce its policies everywhere. Compile to any framework.
 
-Cortex Protocol is a portable agent specification layer. Write a single YAML file describing your agent's identity, tools, and policies — then compile it into runnable code for the frameworks your team actually uses.
+![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
----
+## The Problem
 
-## 🎯 The Problem
+The auditor asks: "Which agents can access payment systems, who approved them, and what changed last week?" Today, that answer lives in six different frameworks, scattered across repos, with no shared policy layer. Cortex Protocol is the missing spec layer: one YAML file defines the agent, its tools, its governance rules, and its identity - and compiles to whatever framework your team uses.
 
-Every agent framework defines agents differently:
-
-| Framework | Agent Definition |
-|-----------|-----------------|
-| OpenAI SDK | `Agent()` + `FunctionTool` in Python |
-| Claude SDK | `input_schema` tool format + agentic loop |
-| CrewAI | `agents.yaml` + `tasks.yaml` |
-| LangGraph | `StateGraph` + `ToolNode` + conditional edges |
-| Semantic Kernel | `ChatCompletionAgent` + `@kernel_function` plugins |
-
-Teams running multiple frameworks **maintain duplicate specifications**. Change a policy in one place, forget to update the others.
-
-## 💡 The Solution
-
-One spec. Six targets. Zero duplication.
-
-```yaml
-# agent.yaml — define once
-version: "0.1"
-
-agent:
-  name: incident-commander
-  description: Manages production incidents
-  instructions: |
-    Summarize impact, contact owners, escalate SEV1.
-
-tools:
-  - name: jira
-    description: Create or update Jira tickets
-    parameters:
-      type: object
-      properties:
-        action: { type: string }
-        summary: { type: string }
-      required: [action, summary]
-
-policies:
-  max_turns: 8
-  require_approval: [pager]
-  forbidden_actions:
-    - Resolve incidents without owner confirmation
-  escalation:
-    trigger: severity is SEV1
-    target: vp-engineering
-
-model:
-  preferred: gpt-4o
-  fallback: claude-sonnet-4
-  temperature: 0.2
-```
+## Quickstart (3 minutes)
 
 ```bash
-cortex-protocol compile agent.yaml --target all --output ./build
-```
+pip install cortex-protocol
 
-That's it. Six runtime targets generated.
-
----
-
-## 🚀 Quick Start
-
-```bash
-# Install
-pip install -e ".[dev]"
-
-# Create an example agent spec
+# 1. Create a spec
 cortex-protocol init agent.yaml
 
-# Validate it
+# 2. Validate it
 cortex-protocol validate agent.yaml
 
-# Lint governance quality (0-100 score + letter grade)
+# 3. Lint for governance quality
 cortex-protocol lint agent.yaml
 
-# Compile to all targets
-cortex-protocol compile agent.yaml --target all --output ./build
+# 4. Compile to your framework
+cortex-protocol compile agent.yaml --target openai-sdk --output ./out
+cortex-protocol compile agent.yaml --target all --output ./out
 
-# Install a curated starter pack
-cortex-protocol install incident-response
-
-# Generate a CI workflow (GitHub Actions)
-cortex-protocol generate-ci
+# 5. Enforce at runtime
 ```
 
----
+```python
+from cortex_protocol.models import AgentSpec
+from cortex_protocol.governance.enforcer import PolicyEnforcer
 
-## 🎯 Compilation Targets
+spec = AgentSpec.from_yaml("agent.yaml")
+enforcer = PolicyEnforcer(spec)
 
-| Target | What It Generates | Files |
-|--------|-------------------|-------|
-| 📝 `system-prompt` | Model-optimized prompt (XML for Claude, numbered lists for GPT) | `system_prompt.md` |
-| 🤖 `openai-sdk` | Runnable Python with `Agent()` + `@function_tool` decorators | `agent.py`, `test_agent.py`, `requirements.txt` |
-| 🟣 `claude-sdk` | Anthropic SDK with tool definitions + agentic loop | `agent.py`, `test_agent.py`, `requirements.txt` |
-| 🚢 `crewai` | CrewAI YAML configs + crew scaffold | `config/agents.yaml`, `config/tasks.yaml`, `crew.py`, `test_crew.py`, `requirements.txt` |
-| 🔗 `langgraph` | StateGraph skeleton with ToolNode routing | `agent_graph.py`, `test_graph.py`, `requirements.txt` |
-| 🔷 `semantic-kernel` | Microsoft Semantic Kernel — `ChatCompletionAgent` + plugin functions | `agent.py`, `test_agent.py`, `requirements.txt` |
-| 🌐 `all` | Everything above, organized by target | One folder per target |
-
-Every target includes **test stubs** and a **requirements.txt** — ready to install and run.
-
----
-
-## 🛡️ Policy Linter
-
-```bash
-cortex-protocol lint agent.yaml
+# Wraps any callable - blocks forbidden actions, logs everything
+result = enforcer.check_tool_call("delete-user", {"user_id": "123"})
 ```
 
-Scores your spec 0–100 and assigns a letter grade (A–F) based on **governance completeness**:
+## The Three Pillars
 
-```
-  Score: 85/100  Grade: B  (incident-commander)
+**Identity** - The `agent:` block defines name, description, and instructions. The spec is the single source of truth for what the agent is and what it can do. Compile once, run anywhere.
 
-  ✓ [ERROR]    Risky tools have no human approval gate
-  ✓ [ERROR]    No forbidden_actions guardrails defined
-  ✓ [WARNING]  No max_turns limit — agent can run indefinitely
-  ✓ [WARNING]  No escalation path defined for failures or edge cases
-  ⚠ [WARNING]  Instructions are too brief (< 30 words) to be reliable
-               Instructions are 12 words — aim for 30+ for reliable behaviour
-  ✗ [INFO]     No fallback model specified — outages will cause hard failures
-               Add model.fallback to handle primary model outages
+**Governance** - The `policies:` block travels with the agent. `PolicyEnforcer` wraps any tool call and enforces `forbidden_actions`, `require_approval`, `max_turns`, and escalation rules at runtime, writing every decision to an audit log.
 
-  1 warning(s)
-```
+**Network** - The `tools:` block supports MCP references (`mcp: "mcp-server-github@1.0.0"`), which compile to native MCP client code for each target. The `extends:` field enables spec inheritance from a versioned registry.
 
-**Rules checked:**
-
-| Rule | Severity | Weight |
-|------|----------|--------|
-| `approval-gate-missing` — risky tools without human gate | ERROR | 25 |
-| `no-forbidden-actions` — no guardrails defined | ERROR | 20 |
-| `missing-max-turns` — agent can loop indefinitely | WARNING | 15 |
-| `no-escalation-path` — no handoff defined | WARNING | 15 |
-| `thin-instructions` — < 30 words | WARNING | 10 |
-| `no-fallback-model` — no backup model | INFO | 10 |
-| `tools-missing-required` — parameters with no required fields | WARNING | 5 |
-
-**CI integration** — fail builds on policy violations:
-
-```bash
-# Block PRs with error-severity issues
-cortex-protocol lint agent.yaml --fail-on error
-
-# Stricter: block on warnings too
-cortex-protocol lint agent.yaml --fail-on warning
-
-# JSON output for programmatic use
-cortex-protocol lint agent.yaml --format json
-```
-
----
-
-## 🔍 Spec Differ
-
-Track what changed between two versions of your agent spec:
-
-```bash
-cortex-protocol diff agent-v1.yaml agent-v2.yaml
-```
-
-```
-  Diff: agent-v1.yaml → agent-v2.yaml
-
-  ⚠  Breaking changes detected
-
-  - tool: jira                         (removed)
-  + tool: linear                       (added)
-  ~ tool: pager                        (parameters changed)
-  ~ policy.max_turns: 8 → 12
-  ~ policy.require_approval: ['pager'] → ['pager', 'send-email']
-  ~ model.temperature: 0.2 → 0.3
-```
-
-Breaking changes (tool removals, policy relaxations) are flagged automatically — useful in code review to catch unintended governance regressions.
-
-```bash
-# JSON output for diff-in-CI tooling
-cortex-protocol diff v1.yaml v2.yaml --format json
-```
-
----
-
-## 📦 Agent Packs
-
-Install curated, ready-to-use agent specs from the built-in registry:
-
-```bash
-# See what's available
-cortex-protocol list-packs
-
-# Install a pack
-cortex-protocol install incident-response
-cortex-protocol install customer-support
-cortex-protocol install code-review
-```
-
-Each pack is a fully-specified agent with:
-- Complete tool definitions with parameter schemas
-- Governance policies (approval gates, forbidden actions, escalation)
-- Model preferences with fallbacks
-- Ready to compile to any target
-
-**Available packs:**
-
-| Pack | Description | Agents |
-|------|-------------|--------|
-| `incident-response` | Production incident command — triage, page, escalate SEV1 | `incident-commander` |
-| `customer-support` | Multi-tier support — lookup, refund, escalate to human | `support-agent` |
-| `code-review` | Automated code review — lint, coverage, policy check | `code-reviewer` |
-
----
-
-## ⚙️ GitHub Actions CI
-
-Generate a CI workflow that validates, lints, and compiles your spec on every PR:
-
-```bash
-cortex-protocol generate-ci
-```
-
-The generated `.github/workflows/cortex-protocol.yml`:
-- ✅ Validates spec schema on every PR
-- 🛡️ Lints governance score (fails on errors by default)
-- 🔨 Compiles to all 6 targets as a dry-run verification
-- 💬 Posts a governance score comment on the PR
-
-```
-## 🟢 Cortex Protocol — Governance Score: 90/100 (Grade: A)
-
-| Status | Rule | Severity | Message |
-|--------|------|----------|---------|
-| ✓ | approval-gate-missing | error | Risky tools have no human approval gate |
-| ✓ | no-forbidden-actions | error | No forbidden_actions guardrails defined |
-...
-```
-
----
-
-## 🧠 Model-Family-Aware Compilation
-
-The system prompt target formats differently based on the model family (ported from [Cortex](https://github.com/Phani3108/Cortex)):
-
-**Claude** → XML tags (what Claude responds best to):
-```xml
-<identity>
-- You are incident-commander.
-- Manages production incidents
-</identity>
-
-<policies>
-- The following tools require human approval: pager
-- You must NEVER: Resolve incidents without owner confirmation
-</policies>
-```
-
-**GPT** → Numbered markdown (what GPT responds best to):
-```markdown
-## Identity
-
-1. You are incident-commander.
-2. Manages production incidents
-
-## Policies
-
-1. The following tools require human approval: pager
-2. You must NEVER: Resolve incidents without owner confirmation
-```
-
-**Reasoning models (o3, o4)** → Minimal flat constraints
-**Open source (Llama, DeepSeek)** → Explicit, repeated instructions
-
-```bash
-# Override model for prompt formatting
-cortex-protocol compile agent.yaml --target system-prompt --model claude-sonnet-4
-cortex-protocol compile agent.yaml --target system-prompt --model gpt-4o
-```
-
----
-
-## 📋 Spec Schema (v0.1)
-
-```yaml
-version: "0.1"
-
-agent:
-  name: string              # Agent identifier
-  description: string       # What this agent does
-  instructions: |           # Core behavioral prompt
-    Multi-line markdown.
-
-tools:
-  - name: string            # Tool identifier
-    description: string     # What the tool does
-    parameters:             # JSON Schema for inputs
-      type: object
-      properties: { ... }
-      required: [ ... ]
-
-policies:
-  max_turns: integer        # Max turns before escalation
-  require_approval:         # Tools needing human approval
-    - tool_name
-  forbidden_actions:        # Things the agent must never do
-    - string
-  escalation:
-    trigger: string         # When to hand off
-    target: string          # Who to escalate to
-
-model:
-  preferred: string         # e.g. "claude-sonnet-4"
-  fallback: string          # e.g. "gpt-4o"
-  temperature: float        # 0.0 – 2.0
-```
-
----
-
-## 🏗️ Architecture
-
-```
-cortex_protocol/
-├── models.py           # Pydantic v2 schema (AgentSpec, ToolSpec, PolicySpec)
-├── validator.py        # Schema + semantic validation
-├── compiler.py         # Model-family-aware prompt formatting
-├── model_families.py   # Regex-based model detection (10 families)
-├── linter.py           # Policy linter (7 rules, 0-100 scoring)
-├── differ.py           # Spec diff engine (tools, policies, model)
-├── registry.py         # Built-in pack registry (3 curated packs)
-├── ci.py               # GitHub Actions workflow generator
-├── cli.py              # Click CLI (init, validate, compile, lint, diff, list-targets, list-packs, install, generate-ci)
-└── targets/
-    ├── base.py             # Abstract CompilationTarget
-    ├── system_prompt.py    # Universal prompt generator
-    ├── openai_sdk.py       # OpenAI Agent SDK
-    ├── claude_sdk.py       # Anthropic Claude SDK
-    ├── crewai.py           # CrewAI YAML + scaffold
-    ├── langgraph.py        # LangGraph StateGraph
-    └── semantic_kernel.py  # Microsoft Semantic Kernel
-```
-
----
-
-## ✅ Tests
-
-```bash
-# Run the full suite
-pytest tests/ -v
-
-# 169 tests covering:
-#   - Schema validation & round-trip (YAML → Pydantic → JSON → Pydantic)
-#   - Model family detection (Claude, GPT, Gemini, o-series, Llama, DeepSeek, Mistral)
-#   - Per-target compilation (all 6 targets × 2 fixture specs)
-#   - Generated code syntax verification (ast.parse on all Python output)
-#   - Policy linter (7 rules, scoring, grading)
-#   - Spec differ (tools, policies, model, identity changes)
-#   - Pack registry (3 packs, validity, install)
-#   - CI workflow generator (YAML validity, step verification)
-```
-
----
-
-## 🔗 How It Fits
-
-| Layer | Project | What It Does |
-|-------|---------|-------------|
-| 🔌 Tool connectivity | **MCP** | Standardizes how agents connect to tools |
-| 📝 Coding tool config | **[Cortex](https://github.com/Phani3108/Cortex)** | Portable config for AI coding tools (9 providers) |
-| 🧬 Agent specification | **Cortex Protocol** ← you are here | Portable agent definition + governance |
-
-> *MCP standardizes how agents connect to tools.*
-> *Cortex Protocol standardizes how agents are defined and governed.*
-
----
-
-## 📦 CLI Reference
+## CLI Reference
 
 | Command | Description |
 |---------|-------------|
-| `cortex-protocol init [file]` | Create an example agent spec |
-| `cortex-protocol validate <file>` | Validate spec against schema |
-| `cortex-protocol lint <file>` | Score governance quality (0-100, A-F grade) |
-| `cortex-protocol lint <file> --fail-on error` | Exit 1 on errors (CI integration) |
-| `cortex-protocol diff <a.yaml> <b.yaml>` | Diff two spec versions |
-| `cortex-protocol compile <file> -t <target> -o <dir>` | Compile to a target runtime |
-| `cortex-protocol compile <file> -t all -o <dir>` | Compile to all 6 targets |
-| `cortex-protocol list-targets` | Show available compilation targets |
-| `cortex-protocol list-packs` | Show available agent packs |
-| `cortex-protocol install <pack>` | Install a curated agent pack |
-| `cortex-protocol generate-ci` | Generate GitHub Actions workflow |
-| `cortex-protocol --version` | Show version |
+| `init [file]` | Create an example agent spec |
+| `validate <file>` | Validate spec against schema |
+| `lint <file>` | Score spec 0-100, assign grade A-F |
+| `diff <file-a> <file-b>` | Diff two specs, flag breaking changes |
+| `compile <file> -t <target>` | Compile to target runtime (`all` for all) |
+| `list-targets` | List available compilation targets |
+| `list-packs` | List built-in agent packs |
+| `install <pack>` | Install an agent pack |
+| `publish <file> -v <ver>` | Publish spec to local registry |
+| `search` | Search registry by tags/owner/compliance |
+| `registry-list` | List all agents in registry |
+| `audit <log>` | View runtime audit log |
+| `compliance-report <log>` | Generate compliance report (SOC2/GDPR) |
+| `migrate <file>` | Migrate spec to latest schema version |
+| `generate-ci` | Generate GitHub Actions CI workflow |
+| `compile-network <file>` | Compile multi-agent network spec |
+| `generate-a2a <file>` | Generate A2A protocol server |
 
----
+## Integration Examples
 
-## 📄 License
+### Wrap a LangGraph agent with PolicyEnforcer
 
-MIT — [Phani Marupaka](https://linkedin.com/in/phani-marupaka)
+```python
+from cortex_protocol.models import AgentSpec
+from cortex_protocol.governance.enforcer import PolicyEnforcer
+from cortex_protocol.governance.audit import AuditLog
+from pathlib import Path
+
+spec = AgentSpec.from_yaml("agent.yaml")
+log = AuditLog(path=Path("audit.jsonl"))
+enforcer = PolicyEnforcer(spec, audit_log=log)
+
+def safe_tool_call(tool_name: str, tool_input: dict):
+    result = enforcer.check_tool_call(tool_name, tool_input)
+    if not result.allowed:
+        raise PermissionError(result.detail)
+    return your_actual_tool(tool_name, tool_input)
+```
+
+### Compile a spec to OpenAI SDK with MCP tools
+
+```yaml
+# agent.yaml
+version: "0.3"
+agent:
+  name: github-assistant
+  description: Manages GitHub issues and PRs
+  instructions: You help engineers manage their GitHub workflow.
+
+tools:
+  - name: github-search
+    description: Search GitHub issues and PRs
+    mcp: "mcp-server-github@1.0.0"
+
+policies:
+  max_turns: 10
+  require_approval:
+    - github-create-pr
+```
+
+```bash
+cortex-protocol compile agent.yaml --target openai-sdk --output ./out
+# Generates out/agent.py with MCPServerStdio setup, mcp_servers=[] on Agent
+# Generates out/requirements.txt with openai-agents[mcp]>=0.1
+```
+
+## Schema Reference
+
+```yaml
+version: "0.3"              # Schema version
+
+agent:
+  name: my-agent            # Agent identifier (used in registry, logs)
+  description: "..."        # One-line description
+  instructions: |           # Full system prompt source
+    You are...
+
+tools:
+  - name: search            # Tool name (snake or kebab case)
+    description: "..."      # What the tool does
+    mcp: "mcp-server-github@1.0.0"  # Optional: MCP server reference
+    parameters:
+      type: object
+      properties:
+        query: { type: string }
+      required: [query]
+
+policies:
+  max_turns: 10             # Hard turn limit
+  require_approval:         # These tools need human sign-off
+    - delete-record
+  forbidden_actions:        # Enforcer blocks these at runtime
+    - Share PII externally
+  escalation:
+    trigger: user requests human
+    target: human-support
+
+model:
+  preferred: claude-sonnet-4
+  fallback: gpt-4o
+  temperature: 0.7
+
+metadata:                   # For registry discovery
+  owner: platform-team
+  tags: [payment, customer-support]
+  compliance: [pci-dss, soc2]
+  environment: production
+
+extends: "@org/base-agent@^2.0"  # Inherit from registry
+```
+
+## Architecture
+
+```
+                    ┌─────────────────────┐
+                    │   agent.yaml (spec) │
+                    │   version: "0.3"    │
+                    └──────────┬──────────┘
+                               │
+           ┌───────────────────┼───────────────────┐
+           │                   │                   │
+    ┌──────▼──────┐    ┌───────▼──────┐   ┌───────▼──────┐
+    │  IDENTITY   │    │  GOVERNANCE  │   │   NETWORK    │
+    │             │    │              │   │              │
+    │ - name      │    │ - policies   │   │ - MCP tools  │
+    │ - desc      │    │ - enforcer   │   │ - extends    │
+    │ - instruct. │    │ - audit log  │   │ - registry   │
+    └──────┬──────┘    └───────┬──────┘   └───────┬──────┘
+           │                   │                   │
+           └───────────────────┼───────────────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │     compiler.py     │
+                    └──────────┬──────────┘
+                               │
+      ┌────────┬──────────┬────┴─────┬──────────┬──────────┐
+      │        │          │          │          │          │
+  openai   claude    langgraph   crewai   semantic   system
+   -sdk     -sdk               (yaml)    -kernel   -prompt
+```
+
+## Targets
+
+- **openai-sdk** - Runnable agent.py with MCPServerStdio for MCP tools
+- **claude-sdk** - Anthropic messages API with tool dispatch loop
+- **langgraph** - StateGraph with ToolNode and MCP adapter support
+- **crewai** - agents.yaml + tasks.yaml + crew.py scaffold with MCPTool
+- **semantic-kernel** - Kernel + ChatCompletionAgent + plugin functions
+- **system-prompt** - Model-family-optimized prompt (XML for Claude, numbered lists for GPT)
+
+## License
+
+MIT

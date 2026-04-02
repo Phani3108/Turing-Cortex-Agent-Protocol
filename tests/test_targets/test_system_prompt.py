@@ -45,3 +45,22 @@ def test_policies_in_prompt(policy_spec):
     assert "pager" in content  # require_approval
     assert "NEVER" in content  # forbidden_actions
     assert "vp-engineering" in content  # escalation
+
+
+def test_mcp_tool_annotated_in_system_prompt():
+    from cortex_protocol.models import AgentSpec
+    spec = AgentSpec.from_yaml_str("""
+version: "0.3"
+agent:
+  name: mcp-sys-agent
+  description: Agent with MCP
+  instructions: Test
+tools:
+  - name: gh-search
+    description: Search GitHub
+    mcp: "mcp-server-github@1.0.0"
+""")
+    target = SystemPromptTarget()
+    files = target.compile(spec)
+    assert "via MCP" in files[0].content
+    assert "mcp-server-github" in files[0].content

@@ -2,6 +2,7 @@
 
 import ast
 
+from cortex_protocol.models import AgentSpec
 from cortex_protocol.targets.langgraph import LangGraphTarget
 
 
@@ -97,3 +98,51 @@ def test_policy_agent_compiles(policy_spec):
     files = target.compile(policy_spec)
     graph_py = next(f for f in files if f.path == "agent_graph.py")
     ast.parse(graph_py.content)
+
+
+def _make_mcp_spec():
+    return AgentSpec.from_yaml_str("""
+version: "0.3"
+agent:
+  name: mcp-lang-agent
+  description: LangGraph agent with MCP
+  instructions: Test
+tools:
+  - name: gh-search
+    description: GitHub search via MCP
+    mcp: "mcp-server-github@1.0.0"
+  - name: local-op
+    description: Local operation
+""")
+
+
+def test_mcp_adds_mcp_client_import():
+    spec = _make_mcp_spec()
+    target = LangGraphTarget()
+    files = target.compile(spec)
+    graph_py = next(f for f in files if f.path == "agent_graph.py")
+    assert "MultiServerMCPClient" in graph_py.content
+
+
+def test_mcp_server_name_in_output():
+    spec = _make_mcp_spec()
+    target = LangGraphTarget()
+    files = target.compile(spec)
+    graph_py = next(f for f in files if f.path == "agent_graph.py")
+    assert "mcp-server-github" in graph_py.content
+
+
+def test_non_mcp_tool_still_gets_todo():
+    spec = _make_mcp_spec()
+    target = LangGraphTarget()
+    files = target.compile(spec)
+    graph_py = next(f for f in files if f.path == "agent_graph.py")
+    assert "# TODO: Implement local-op" in graph_py.content
+
+
+def test_mcp_requirements_has_adapter():
+    spec = _make_mcp_spec()
+    target = LangGraphTarget()
+    files = target.compile(spec)
+    reqs = next(f for f in files if f.path == "requirements.txt")
+    assert "langchain-mcp-adapters" in reqs.content
