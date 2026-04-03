@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cortex-protocol"
-version = "0.1.0"
-description = "Portable agent specification — define once, compile to any runtime"
+version = "0.3.0"
+description = "Agent governance-as-code — enforce policies, audit everything, compile to any runtime"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"

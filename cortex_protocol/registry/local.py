@@ -60,14 +60,14 @@ class AgentMeta:
         )
 
 
-_SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+_SEMVER_RE = re.compile(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?$")
 
 
 def _parse_semver(v: str) -> tuple[int, int, int]:
-    m = _SEMVER_RE.match(v)
+    m = _SEMVER_RE.match(v.strip())
     if not m:
-        raise ValueError(f"Invalid semver: {v!r}. Expected format: X.Y.Z")
-    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+        raise ValueError(f"Invalid semver: {v!r}. Expected format: X.Y.Z (or X.Y or X)")
+    return int(m.group(1)), int(m.group(2) or 0), int(m.group(3) or 0)
 
 
 class LocalRegistry:

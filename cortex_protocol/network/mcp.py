@@ -18,7 +18,6 @@ code that wires the tool through a real MCP client instead of a TODO stub.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Optional
 

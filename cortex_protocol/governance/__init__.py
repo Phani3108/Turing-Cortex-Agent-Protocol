@@ -14,6 +14,7 @@ from .exceptions import (
 from .audit import AuditEvent, AuditLog
 from .enforcer import PolicyEnforcer, EnforcementResult
 from .enforce import enforce
+from .approval import always_approve, always_deny, allowlist_handler, log_and_approve
 
 __all__ = [
     "PolicyViolation",
@@ -25,4 +26,8 @@ __all__ = [
     "PolicyEnforcer",
     "EnforcementResult",
     "enforce",
+    "always_approve",
+    "always_deny",
+    "allowlist_handler",
+    "log_and_approve",
 ]

@@ -40,6 +40,7 @@ class PolicySpec(BaseModel):
     require_approval: list[str] = Field(default_factory=list)
     forbidden_actions: list[str] = Field(default_factory=list)
     escalation: EscalationPolicy = Field(default_factory=EscalationPolicy)
+    from_template: Optional[str] = None
 
 
 class ModelConfig(BaseModel):

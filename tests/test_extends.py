@@ -4,10 +4,12 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
 from cortex_protocol.models import AgentSpec, merge_specs
 from cortex_protocol.registry.local import LocalRegistry
 from cortex_protocol.registry.resolver import resolve_extends
+from cortex_protocol.cli import main
 
 
 def _base_spec():
@@ -193,3 +195,65 @@ extends: "@myorg/base-agent@^2.0.0"
         assert merged.agent.name == "child-agent"
         tool_names = {t.name for t in merged.tools}
         assert "shared-tool" in tool_names
+
+
+def test_compile_cli_resolves_extends():
+    """Test that the compile CLI command resolves extends from registry."""
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reg_dir = Path(tmpdir) / "registry"
+        reg = LocalRegistry(reg_dir)
+        base = _base_spec()
+        reg.publish(base, "1.0.0")
+
+        child_yaml = '''\
+version: "0.3"
+agent:
+  name: child-agent
+  description: Child agent
+  instructions: Child instructions
+extends: "base-agent@1.0.0"
+tools:
+  - name: child-only
+    description: Child tool
+policies:
+  max_turns: 5
+'''
+        spec_file = Path(tmpdir) / "child.yaml"
+        spec_file.write_text(child_yaml)
+
+        result = runner.invoke(main, [
+            "compile", str(spec_file),
+            "--target", "system-prompt",
+            "--output", str(Path(tmpdir) / "out"),
+            "--registry-dir", str(reg_dir),
+        ])
+        assert result.exit_code == 0
+        assert "child-agent" in result.output
+
+
+def test_compile_cli_no_extends_flag_skips_resolution():
+    """Test that --no-extends skips extends resolution."""
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        child_yaml = '''\
+version: "0.3"
+agent:
+  name: child-agent
+  description: Child agent
+  instructions: Child instructions
+extends: "nonexistent-base@1.0.0"
+tools:
+  - name: child-only
+    description: Child tool
+'''
+        spec_file = Path(tmpdir) / "child.yaml"
+        spec_file.write_text(child_yaml)
+
+        result = runner.invoke(main, [
+            "compile", str(spec_file),
+            "--target", "system-prompt",
+            "--output", str(Path(tmpdir) / "out"),
+            "--no-extends",
+        ])
+        assert result.exit_code == 0

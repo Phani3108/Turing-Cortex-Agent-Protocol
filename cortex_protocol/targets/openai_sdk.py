@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import ast
-
 from ..compiler import compile_system_prompt
 from ..models import AgentSpec
 from ..network.mcp import generate_mcp_client_code, parse_mcp_ref

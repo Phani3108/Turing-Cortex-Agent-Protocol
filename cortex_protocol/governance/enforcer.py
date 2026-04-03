@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 from ..models import AgentSpec
 from .audit import AuditEvent, AuditLog
@@ -64,10 +64,12 @@ class PolicyEnforcer:
         *,
         audit_log: Optional[AuditLog] = None,
         strict_forbidden: bool = False,
+        approval_handler: Optional[Callable[[str, dict, dict], bool]] = None,
     ):
         self._spec = spec
         self._audit = audit_log or AuditLog()
         self._strict_forbidden = strict_forbidden
+        self._approval_handler = approval_handler
         self._run_id = uuid.uuid4().hex[:12]
         self._turn = 0
 
@@ -145,6 +147,53 @@ class PolicyEnforcer:
         )
 
         if tool_name in require_approval:
+            if self._approval_handler is not None:
+                context = {
+                    "run_id": self._run_id,
+                    "turn": self._turn,
+                    "agent": self._spec.agent.name,
+                }
+                approved = self._approval_handler(tool_name, tool_input, context)
+                if approved:
+                    self._audit.write(AuditEvent.now(
+                        run_id=self._run_id,
+                        agent=self._spec.agent.name,
+                        turn=self._turn,
+                        event_type="tool_approved",
+                        allowed=True,
+                        policy="require_approval",
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        detail=f"Tool '{tool_name}' approved by handler",
+                    ))
+                    return EnforcementResult(
+                        allowed=True,
+                        turn=self._turn,
+                        run_id=self._run_id,
+                        event_type="tool_approved",
+                        detail=f"Tool '{tool_name}' approved by handler",
+                    )
+                else:
+                    self._audit.write(AuditEvent.now(
+                        run_id=self._run_id,
+                        agent=self._spec.agent.name,
+                        turn=self._turn,
+                        event_type="tool_denied",
+                        allowed=False,
+                        policy="require_approval",
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        detail=f"Tool '{tool_name}' denied by handler",
+                    ))
+                    raise ApprovalRequired(
+                        policy="require_approval",
+                        detail=f"Tool '{tool_name}' denied by approval handler",
+                        run_id=self._run_id,
+                        turn=self._turn,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                    )
+
             violation = ApprovalRequired(
                 policy="require_approval",
                 detail=f"Tool '{tool_name}' requires human approval before execution",

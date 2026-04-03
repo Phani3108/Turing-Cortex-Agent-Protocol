@@ -43,9 +43,11 @@ class TestSemver:
         with pytest.raises(ValueError):
             _parse_semver("not-a-version")
 
-    def test_incomplete_raises(self):
-        with pytest.raises(ValueError):
-            _parse_semver("1.2")
+    def test_shorthand_two_part(self):
+        assert _parse_semver("1.2") == (1, 2, 0)
+
+    def test_shorthand_one_part(self):
+        assert _parse_semver("1") == (1, 0, 0)
 
 
 # ---------------------------------------------------------------------------

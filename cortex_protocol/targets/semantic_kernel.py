@@ -152,7 +152,7 @@ class SemanticKernelTarget(CompilationTarget):
                 mcp_code = generate_mcp_client_code("semantic-kernel", tool.name, tool.mcp)
                 lines.append(f"    from semantic_kernel.connectors.mcp import MCPStdioPlugin")
                 lines.append(f"    {mcp_code['setup']}")
-                lines.append(f"    # kernel.add_plugin({_to_snake(tool.name)}_plugin)")
+                lines.append(f"    kernel.add_plugin({_to_snake(tool.name)}_plugin, plugin_name=\"{_to_snake(tool.name)}_mcp\")")
 
         lines.append("    return kernel")
         lines.append("")

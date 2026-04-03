@@ -115,7 +115,11 @@ def validate(file: str):
               help="Output directory")
 @click.option("--model", "-m", default=None,
               help="Override model hint for system prompt generation")
-def compile(file: str, target: str, output: str, model: str):
+@click.option("--registry-dir", default=None,
+              help="Custom registry directory (default: ~/.cortex-protocol/registry)")
+@click.option("--no-extends", is_flag=True, default=False,
+              help="Skip extends resolution")
+def compile(file: str, target: str, output: str, model: str, registry_dir: str, no_extends: bool):
     """Compile an agent spec to a target runtime."""
     from .validator import validate_file
 
@@ -125,6 +129,16 @@ def compile(file: str, target: str, output: str, model: str):
         for err in errors:
             click.echo(f"  - {err}", err=True)
         sys.exit(1)
+
+    if spec.extends and not no_extends:
+        from .registry.local import LocalRegistry
+        from .registry.resolver import resolve_extends
+        reg = LocalRegistry(Path(registry_dir)) if registry_dir else LocalRegistry()
+        spec = resolve_extends(spec, reg)
+
+    if spec.policies.from_template:
+        from .governance.templates import resolve_policy_template
+        spec = spec.model_copy(update={"policies": resolve_policy_template(spec.policies)})
 
     if target == "all":
         targets = list(TARGET_REGISTRY.keys())
@@ -808,6 +822,108 @@ def migrate(file: str, output: str):
         shutil.copy2(file, backup)
         Path(file).write_text(content)
         click.echo(f"Migrated {file} ({original_version} -> {new_version}) [backup: {backup}]")
+
+
+# ---------------------------------------------------------------------------
+# list-templates
+# ---------------------------------------------------------------------------
+
+@main.command("list-templates")
+def list_templates_cmd():
+    """List available built-in policy templates."""
+    from .governance.templates import list_templates
+
+    templates = list_templates()
+    click.echo("\n  Built-in policy templates:\n")
+    for name, info in templates.items():
+        click.echo(f"  {name}")
+        click.echo(f"    max_turns: {info['max_turns']}")
+        if info["require_approval"]:
+            click.echo(f"    require_approval: {', '.join(info['require_approval'])}")
+        if info["forbidden_actions"]:
+            click.echo(f"    forbidden_actions: {', '.join(info['forbidden_actions'])}")
+        click.echo()
+
+
+# ---------------------------------------------------------------------------
+# fleet-report
+# ---------------------------------------------------------------------------
+
+@main.command("fleet-report")
+@click.argument("log_files", nargs=-1, type=click.Path(exists=True))
+@click.option("--standard", default="general", type=click.Choice(["general", "soc2", "gdpr"]))
+@click.option("--output", "-o", default=None)
+@click.option("--specs-dir", default=None, type=click.Path(exists=True),
+              help="Directory of agent YAML specs for drift detection")
+def fleet_report(log_files, standard, output, specs_dir):
+    """Generate a fleet-wide compliance report from multiple audit logs."""
+    from .governance.fleet import generate_fleet_report
+
+    if not log_files:
+        click.echo("Error: provide at least one log file.", err=True)
+        sys.exit(1)
+
+    paths = [Path(f) for f in log_files]
+
+    specs = None
+    if specs_dir:
+        from .validator import validate_file
+        specs = {}
+        for yaml_file in Path(specs_dir).glob("*.yaml"):
+            spec, errors = validate_file(str(yaml_file))
+            if spec and not errors:
+                specs[spec.agent.name] = spec
+
+    report = generate_fleet_report(paths, standard=standard, specs=specs)
+
+    if output:
+        Path(output).write_text(report)
+        click.echo(f"Fleet report written to {output}")
+    else:
+        click.echo(report)
+
+
+# ---------------------------------------------------------------------------
+# drift-check
+# ---------------------------------------------------------------------------
+
+@main.command("drift-check")
+@click.argument("spec_file", type=click.Path(exists=True))
+@click.argument("log_file", type=click.Path(exists=True))
+@click.option("--fail-on", "fail_threshold", type=float, default=None,
+              help="Exit code 1 if compliance score below this (e.g. 0.9)")
+@click.option("--format", "fmt", default="text", type=click.Choice(["text", "json"]))
+def drift_check(spec_file, log_file, fail_threshold, fmt):
+    """Compare agent behavior (audit log) against its spec.
+    Detects undeclared tools, policy violations, and approval bypasses."""
+    from .validator import validate_file
+    from .governance.audit import AuditLog
+    from .governance.drift import detect_drift
+
+    spec, errors = validate_file(spec_file)
+    if errors:
+        for err in errors:
+            click.echo(f"  - {err}", err=True)
+        sys.exit(1)
+
+    log = AuditLog.from_file(Path(log_file))
+    report = detect_drift(spec, log)
+
+    if fmt == "json":
+        click.echo(json.dumps(report.to_dict(), indent=2))
+    else:
+        color = "green" if report.compliance_score >= 0.9 else "yellow" if report.compliance_score >= 0.7 else "red"
+        click.echo(f"\n  Drift Check: {report.agent_name}")
+        click.echo(click.style(f"  Compliance Score: {report.compliance_score:.1%}", fg=color, bold=True))
+        click.echo(f"  Runs: {report.total_runs}  Events: {report.total_events}")
+        click.echo()
+        for detail in report.details:
+            icon = "!" if "exceeded" in detail or "without" in detail or "Undeclared" in detail else "i"
+            click.echo(f"  [{icon}] {detail}")
+        click.echo()
+
+    if fail_threshold is not None and report.compliance_score < fail_threshold:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
