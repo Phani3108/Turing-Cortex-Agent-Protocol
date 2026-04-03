@@ -1,34 +1,41 @@
-# Cortex Protocol
+# 🧠 Cortex Protocol
 
-> Define your AI agent once. Enforce its policies everywhere. Compile to any framework.
+> **The governance layer for enterprise AI agents.**
+> Define once. Enforce everywhere. Audit everything.
 
-![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+Stop guessing what your agents are doing in production. Cortex Protocol wraps any agent - in any framework - with policy enforcement, an immutable audit trail, and compliance reporting that satisfies your auditors.
 
-## The Problem
+[![Tests](https://img.shields.io/badge/tests-510%20passing-brightgreen)](https://github.com/Phani3108/Turing-Cortex-Agent-Protocol)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
+[![Version](https://img.shields.io/badge/version-0.3.0-orange)](https://github.com/Phani3108/Turing-Cortex-Agent-Protocol)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-The auditor asks: "Which agents can access payment systems, who approved them, and what changed last week?" Today, that answer lives in six different frameworks, scattered across repos, with no shared policy layer. Cortex Protocol is the missing spec layer: one YAML file defines the agent, its tools, its governance rules, and its identity - and compiles to whatever framework your team uses.
+---
 
-## Quickstart (3 minutes)
+## ❓ The Problem
+
+Your auditor asks: *"Which agents can access payment systems, who approved them, and what changed last week?"*
+
+Today that answer is scattered across 6 repos, 4 frameworks, and 12 team Slack threads. Cortex Protocol makes it a 10-second CLI command.
+
+---
+
+## ⚡ Quickstart
 
 ```bash
 pip install cortex-protocol
 
-# 1. Create a spec
+# 1. Define your agent
 cortex-protocol init agent.yaml
 
-# 2. Validate it
+# 2. Validate + lint for governance quality
 cortex-protocol validate agent.yaml
-
-# 3. Lint for governance quality
 cortex-protocol lint agent.yaml
 
-# 4. Compile to your framework
+# 3. Compile to your framework
 cortex-protocol compile agent.yaml --target openai-sdk --output ./out
-cortex-protocol compile agent.yaml --target all --output ./out
 
-# 5. Enforce at runtime
+# 4. Wrap any existing agent with enforcement
 ```
 
 ```python
@@ -38,172 +45,417 @@ from cortex_protocol.governance.enforcer import PolicyEnforcer
 spec = AgentSpec.from_yaml("agent.yaml")
 enforcer = PolicyEnforcer(spec)
 
-# Wraps any callable - blocks forbidden actions, logs everything
-result = enforcer.check_tool_call("delete-user", {"user_id": "123"})
+# Blocks gated tools, checks forbidden actions, logs everything
+enforcer.check_tool_call("process-refund", {"amount": 500})
+enforcer.increment_turn()
 ```
 
-## The Three Pillars
+---
 
-**Identity** - The `agent:` block defines name, description, and instructions. The spec is the single source of truth for what the agent is and what it can do. Compile once, run anywhere.
+## 🏛️ Three Pillars
 
-**Governance** - The `policies:` block travels with the agent. `PolicyEnforcer` wraps any tool call and enforces `forbidden_actions`, `require_approval`, `max_turns`, and escalation rules at runtime, writing every decision to an audit log.
+### 🪪 Identity - *What is this agent?*
+- Versioned YAML spec with name, tools, policies, model config
+- Publish to local or GitHub-backed registry with semver
+- `extends:` inheritance - child specs override base specs (multi-level, cycle-detected)
+- `from_template:` policy presets - mix and compose across standards
 
-**Network** - The `tools:` block supports MCP references (`mcp: "mcp-server-github@1.0.0"`), which compile to native MCP client code for each target. The `extends:` field enables spec inheritance from a versioned registry.
+### 🛡️ Governance - *What can it do, and did it comply?*
+- Runtime enforcement with fail-closed semantics
+- Approval gates, forbidden action checks, turn limits
+- Immutable JSONL audit trail - every decision logged
+- SOC2 / HIPAA / PCI-DSS compliance reports with real control IDs
 
-## CLI Reference
+### 🌐 Network - *How does it connect?*
+- MCP (Model Context Protocol) wiring in all 6 compilation targets
+- A2A (Agent-to-Agent) agent cards and server handlers
+- Multi-agent network specs with route validation
+- Shared policies across agent fleets
 
-| Command | Description |
-|---------|-------------|
-| `init [file]` | Create an example agent spec |
-| `validate <file>` | Validate spec against schema |
-| `lint <file>` | Score spec 0-100, assign grade A-F |
-| `diff <file-a> <file-b>` | Diff two specs, flag breaking changes |
-| `compile <file> -t <target>` | Compile to target runtime (`all` for all) |
-| `list-targets` | List available compilation targets |
-| `list-packs` | List built-in agent packs |
-| `install <pack>` | Install an agent pack |
-| `publish <file> -v <ver>` | Publish spec to local registry |
-| `search` | Search registry by tags/owner/compliance |
-| `registry-list` | List all agents in registry |
-| `audit <log>` | View runtime audit log |
-| `compliance-report <log>` | Generate compliance report (SOC2/GDPR) |
-| `migrate <file>` | Migrate spec to latest schema version |
-| `generate-ci` | Generate GitHub Actions CI workflow |
-| `compile-network <file>` | Compile multi-agent network spec |
-| `generate-a2a <file>` | Generate A2A protocol server |
+---
 
-## Integration Examples
-
-### Wrap a LangGraph agent with PolicyEnforcer
+## 🔐 Runtime Enforcement
 
 ```python
-from cortex_protocol.models import AgentSpec
-from cortex_protocol.governance.enforcer import PolicyEnforcer
-from cortex_protocol.governance.audit import AuditLog
-from pathlib import Path
+from cortex_protocol.governance import PolicyEnforcer, enforce
+from cortex_protocol.governance.approval import webhook_handler, allowlist_handler
 
-spec = AgentSpec.from_yaml("agent.yaml")
-log = AuditLog(path=Path("audit.jsonl"))
-enforcer = PolicyEnforcer(spec, audit_log=log)
+# Simple one-liner wrap
+safe_agent = enforce(my_agent_fn, "agent.yaml", audit_dir="./logs")
+result = safe_agent("Process this refund")
 
-def safe_tool_call(tool_name: str, tool_input: dict):
-    result = enforcer.check_tool_call(tool_name, tool_input)
-    if not result.allowed:
-        raise PermissionError(result.detail)
-    return your_actual_tool(tool_name, tool_input)
+# Full control with approval delegation
+enforcer = PolicyEnforcer(
+    spec,
+    approval_handler=webhook_handler(
+        url="https://hooks.slack.com/services/...",
+        on_error="deny",   # fail-closed
+    ),
+    strict_forbidden=True,
+)
+
+# Async support
+await enforcer.async_check_tool_call("delete-user", {"user_id": "123"})
 ```
 
-### Compile a spec to OpenAI SDK with MCP tools
+**Pattern matching in approval gates:**
+```yaml
+policies:
+  require_approval:
+    - "*"             # all tools
+    - "db-*"          # glob: any db- prefixed tool
+    - "/^delete-.*/"  # regex
+    - "send-email"    # exact
+```
+
+---
+
+## 📋 Policy Templates
 
 ```yaml
-# agent.yaml
-version: "0.3"
-agent:
-  name: github-assistant
-  description: Manages GitHub issues and PRs
-  instructions: You help engineers manage their GitHub workflow.
-
-tools:
-  - name: github-search
-    description: Search GitHub issues and PRs
-    mcp: "mcp-server-github@1.0.0"
-
 policies:
-  max_turns: 10
-  require_approval:
-    - github-create-pr
+  from_template: ["read-only", "payment-safe"]  # compose multiple
+  forbidden_actions:
+    - "access admin"   # merged on top of template
 ```
+
+**Built-in templates:**
+- 🔒 `strict` - all tools require approval, broad forbidden actions
+- 👁️ `read-only` - blocks all write/delete/create operations
+- 💳 `payment-safe` - gates payment tools, prevents PII sharing
+- 🏥 `hipaa` - gates patient data access, prevents PHI leaks
+- ⚡ `minimal` - high turn limit, no restrictions
+
+```python
+from cortex_protocol.governance.templates import register_template
+
+# Register org-specific templates
+register_template("my-org-standard", PolicySpec(
+    max_turns=15,
+    require_approval=["external-api-call"],
+    forbidden_actions=["log credentials"],
+))
+```
+
+---
+
+## 📊 Compliance Reporting
 
 ```bash
-cortex-protocol compile agent.yaml --target openai-sdk --output ./out
-# Generates out/agent.py with MCPServerStdio setup, mcp_servers=[] on Agent
-# Generates out/requirements.txt with openai-agents[mcp]>=0.1
+# Real SOC2 control IDs with PASS/FAIL
+cortex-protocol compliance-report audit.jsonl --standard soc2
+
+# HIPAA 164.312 series
+cortex-protocol compliance-report audit.jsonl --standard hipaa --spec agent.yaml
+
+# PCI-DSS requirements
+cortex-protocol compliance-report audit.jsonl --standard pci-dss
 ```
 
-## Schema Reference
+**What you get:**
+- ✅ **CC6.1** Logical Access Controls - PASS (all tool events have agent identity)
+- ⚠️ **CC6.2** Prior to Granting Access - PARTIAL (2 approval events detected)
+- ✅ **CC7.1** Detection and Monitoring - PASS (847 audit events)
+- ❌ **CC7.2** Anomaly Detection - FAIL (12 violations detected)
 
+---
+
+## 🔍 Drift Detection
+
+Catch agents that violate their own spec in production:
+
+```bash
+# Compare actual behavior against spec
+cortex-protocol drift-check agent.yaml ./logs/audit_agent.jsonl
+
+# Block CI merges when compliance drops below threshold
+cortex-protocol drift-check agent.yaml audit.jsonl --fail-on 0.9
+```
+
+**Detects:**
+- 🔧 Tools used that aren't declared in the spec
+- ⏱️ Runs that exceeded `max_turns`
+- 🚫 Forbidden actions triggered in production
+- 🔓 Approval-gated tools called without approval
+
+---
+
+## 🚢 Fleet Reporting
+
+One report across your entire agent fleet:
+
+```bash
+cortex-protocol fleet-report ./logs/*.jsonl --standard soc2
+cortex-protocol fleet-report ./logs/*.jsonl --specs-dir ./specs/  # with drift
+```
+
+**Supports:**
+- 👥 Per-team grouping (`--team-map agent:team`)
+- 📅 Time-range filtering (`--time-min` / `--time-max`)
+- 🏆 Top violators ranked by severity
+- 🗺️ SOC2 / GDPR / HIPAA / PCI-DSS fleet summaries
+- 📤 Machine-readable JSON for SIEM ingestion
+
+---
+
+## 🔌 Framework Adapters
+
+Drop governance into any existing agent - no rewrite required:
+
+```python
+# LangChain
+from cortex_protocol.governance.adapters.langchain import GovernedRunnable
+governed_chain = GovernedRunnable(my_chain, spec)
+result = governed_chain.invoke("Process this request")
+
+# LangGraph
+from cortex_protocol.governance.adapters.langgraph import governed_agent_node, governed_tool_node
+
+@governed_agent_node(spec)
+def my_agent_node(state):
+    ...
+
+@governed_tool_node(spec, approval_handler=webhook_handler(url="..."))
+def my_tool_node(state):
+    ...
+
+# OpenAI Agents SDK
+from cortex_protocol.governance.adapters.openai_agents import cortex_guardrail
+agent = Agent(name="x", guardrails=[cortex_guardrail(spec)])
+
+# FastAPI / A2A endpoints
+from cortex_protocol.governance.adapters.fastapi import GovernanceMiddleware
+app.add_middleware(GovernanceMiddleware, spec=spec, audit_log=log)
+```
+
+---
+
+## 📁 Audit Trail
+
+```python
+from cortex_protocol.governance.audit import RotatingAuditLog, AuditLog
+from cortex_protocol.governance.audit_export import CallbackExporter, JsonlFileExporter
+
+# Rotating log with auto-rotation at 10MB
+log = RotatingAuditLog(
+    path=Path("./logs/audit.jsonl"),
+    max_bytes=10_000_000,
+    backup_count=5,
+)
+
+# Fan-out to multiple destinations
+log = AuditLog(
+    path=Path("./logs/audit.jsonl"),
+    exporters=[
+        CallbackExporter(lambda e: send_to_datadog(e)),
+        JsonlFileExporter(Path("./archive/audit_backup.jsonl")),
+    ],
+)
+```
+
+**Every event includes:**
+- `timestamp`, `run_id`, `agent`, `turn`
+- `event_type`: `tool_call` / `tool_blocked` / `tool_approved` / `tool_denied` / `forbidden_action` / `max_turns` / `escalation`
+- `allowed: true/false`, `policy`, `detail`
+
+---
+
+## 🏗️ Registry
+
+```bash
+# Publish with semver
+cortex-protocol publish agent.yaml --version 1.0.0
+
+# Remote GitHub-backed registry
+cortex-protocol publish agent.yaml -v 2.0.0 --remote github:MyOrg/agent-registry
+
+# Search by metadata
+cortex-protocol search --tag payment --compliance pci-dss
+cortex-protocol search --owner platform-team --remote github:MyOrg/agent-registry
+```
+
+**Spec inheritance:**
 ```yaml
-version: "0.3"              # Schema version
-
-agent:
-  name: my-agent            # Agent identifier (used in registry, logs)
-  description: "..."        # One-line description
-  instructions: |           # Full system prompt source
-    You are...
-
-tools:
-  - name: search            # Tool name (snake or kebab case)
-    description: "..."      # What the tool does
-    mcp: "mcp-server-github@1.0.0"  # Optional: MCP server reference
-    parameters:
-      type: object
-      properties:
-        query: { type: string }
-      required: [query]
+extends: "@myorg/base-payment-agent@^2.0.0"  # multi-level, cycle-detected
 
 policies:
-  max_turns: 10             # Hard turn limit
-  require_approval:         # These tools need human sign-off
-    - delete-record
-  forbidden_actions:        # Enforcer blocks these at runtime
-    - Share PII externally
-  escalation:
-    trigger: user requests human
-    target: human-support
-
-model:
-  preferred: claude-sonnet-4
-  fallback: gpt-4o
-  temperature: 0.7
-
-metadata:                   # For registry discovery
-  owner: platform-team
-  tags: [payment, customer-support]
-  compliance: [pci-dss, soc2]
-  environment: production
-
-extends: "@org/base-agent@^2.0"  # Inherit from registry
+  from_template: payment-safe
+  max_turns: 20  # override base
 ```
 
-## Architecture
+---
 
-```
-                    ┌─────────────────────┐
-                    │   agent.yaml (spec) │
-                    │   version: "0.3"    │
-                    └──────────┬──────────┘
-                               │
-           ┌───────────────────┼───────────────────┐
-           │                   │                   │
-    ┌──────▼──────┐    ┌───────▼──────┐   ┌───────▼──────┐
-    │  IDENTITY   │    │  GOVERNANCE  │   │   NETWORK    │
-    │             │    │              │   │              │
-    │ - name      │    │ - policies   │   │ - MCP tools  │
-    │ - desc      │    │ - enforcer   │   │ - extends    │
-    │ - instruct. │    │ - audit log  │   │ - registry   │
-    └──────┬──────┘    └───────┬──────┘   └───────┬──────┘
-           │                   │                   │
-           └───────────────────┼───────────────────┘
-                               │
-                    ┌──────────▼──────────┐
-                    │     compiler.py     │
-                    └──────────┬──────────┘
-                               │
-      ┌────────┬──────────┬────┴─────┬──────────┬──────────┐
-      │        │          │          │          │          │
-  openai   claude    langgraph   crewai   semantic   system
-   -sdk     -sdk               (yaml)    -kernel   -prompt
-```
+## ⚙️ Compile to Any Framework
 
-## Targets
+```bash
+cortex-protocol compile agent.yaml --target openai-sdk
+cortex-protocol compile agent.yaml --target claude-sdk
+cortex-protocol compile agent.yaml --target langgraph
+cortex-protocol compile agent.yaml --target crewai
+cortex-protocol compile agent.yaml --target semantic-kernel
+cortex-protocol compile agent.yaml --target system-prompt
+cortex-protocol compile agent.yaml --target all
+```
 
 - **openai-sdk** - Runnable agent.py with MCPServerStdio for MCP tools
 - **claude-sdk** - Anthropic messages API with tool dispatch loop
 - **langgraph** - StateGraph with ToolNode and MCP adapter support
-- **crewai** - agents.yaml + tasks.yaml + crew.py scaffold with MCPTool
+- **crewai** - agents.yaml + tasks.yaml + crew.py with MCPTool
 - **semantic-kernel** - Kernel + ChatCompletionAgent + plugin functions
 - **system-prompt** - Model-family-optimized prompt (XML for Claude, numbered lists for GPT)
 
-## License
+MCP tools are auto-wired in all generated code:
+```yaml
+tools:
+  - name: jira
+    mcp: "mcp-server-atlassian@2.1.0"  # resolved + wired at compile time
+```
 
-MIT
+---
+
+## 🔗 A2A Multi-Agent Networks
+
+```bash
+# Compile a multi-agent network
+cortex-protocol compile-network network.yaml --target langgraph
+
+# Generate A2A agent card + server
+cortex-protocol generate-a2a agent.yaml --framework fastapi
+# Serves: GET /.well-known/agent.json  POST /a2a
+```
+
+---
+
+## 🛠️ CI/CD Integration
+
+```bash
+# Generate GitHub Actions workflow
+cortex-protocol generate-ci --spec agent.yaml
+
+# With drift detection gate (blocks merges if compliance < 90%)
+cortex-protocol generate-ci --spec agent.yaml --include-drift --drift-threshold 0.9
+
+# Generate reusable composite action (action.yml)
+cortex-protocol generate-ci --composite
+```
+
+---
+
+## 📦 All CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `init` | Create an example agent spec |
+| `validate` | Validate against schema |
+| `lint` | Score 0-100, grade A-F |
+| `diff` | Diff two specs, flag breaking changes |
+| `compile` | Compile to target runtime |
+| `compile-network` | Compile multi-agent network |
+| `migrate` | Migrate spec to latest schema version |
+| `publish` | Publish to local or remote registry |
+| `search` | Search registry by tag/owner/compliance |
+| `registry-list` | List all agents in registry |
+| `install` | Install a built-in agent pack |
+| `list-packs` | List available packs |
+| `list-targets` | List compilation targets |
+| `list-templates` | List policy templates |
+| `generate-ci` | Generate CI/CD workflow |
+| `generate-a2a` | Generate A2A server |
+| `audit` | View/summarize audit logs |
+| `drift-check` | Compare behavior vs spec |
+| `fleet-report` | Fleet-wide compliance report |
+| `compliance-report` | SOC2 / HIPAA / PCI-DSS report |
+
+---
+
+## 📐 Agent Spec Reference
+
+```yaml
+version: "0.3"
+
+agent:
+  name: payment-processor
+  description: Handles payment operations with full audit trail
+  instructions: |
+    You process payment requests. Always verify amounts.
+    Never share card data. Escalate disputes over $1000.
+
+tools:
+  - name: process-payment
+    description: Charge a payment method
+    mcp: "mcp-server-stripe@1.0.0"   # auto-wired in compilation
+    parameters:
+      type: object
+      properties:
+        amount: { type: number }
+        currency: { type: string }
+      required: [amount, currency]
+
+policies:
+  from_template: payment-safe         # inherit preset
+  max_turns: 10
+  require_approval:
+    - "process-payment"
+    - "issue-refund"
+    - "/^transfer-.*/"                # regex: all transfer- tools
+  forbidden_actions:
+    - "share card number"
+    - "log credentials"
+  escalation:
+    trigger: "dispute over $1000"
+    target: "human-agent"
+
+model:
+  preferred: claude-sonnet-4
+  fallback: gpt-4o
+  temperature: 0.3
+
+metadata:
+  owner: platform-team
+  tags: [payment, pci-dss, sev1]
+  compliance: [pci-dss, soc2]
+  environment: production
+
+extends: "@myorg/base-financial-agent@^2.0.0"
+```
+
+---
+
+## 🏗️ Architecture
+
+```
+cortex_protocol/
+├── governance/              # The moat
+│   ├── enforcer.py          # PolicyEnforcer - runtime blocking
+│   ├── audit.py             # AuditLog + RotatingAuditLog
+│   ├── audit_export.py      # SIEM export protocol
+│   ├── compliance.py        # SOC2 / HIPAA / PCI-DSS controls
+│   ├── drift.py             # Spec vs behavior comparison
+│   ├── fleet.py             # Cross-agent aggregation
+│   ├── templates.py         # Policy presets (composable)
+│   ├── approval.py          # Approval handlers (webhook, etc.)
+│   └── adapters/            # LangChain, LangGraph, OpenAI, FastAPI
+├── registry/                # Identity layer
+│   ├── local.py             # File-based versioned storage
+│   ├── remote.py            # GitHub-backed registry
+│   └── resolver.py          # Semver + multi-level extends
+├── targets/                 # Code generation (6 frameworks)
+│   ├── openai_sdk.py
+│   ├── claude_sdk.py
+│   ├── langgraph.py
+│   ├── crewai.py
+│   ├── semantic_kernel.py
+│   └── system_prompt.py
+└── network/                 # Multi-agent layer
+    ├── mcp.py               # MCP server registry + wiring
+    ├── a2a.py               # A2A cards + handlers
+    └── graph.py             # Network validation + compilation
+```
+
+---
+
+## 📄 License
+
+MIT - see [LICENSE](LICENSE).
+
+Built to be the governance layer your agent fleet can't run without.
