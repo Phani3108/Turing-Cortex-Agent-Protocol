@@ -6,7 +6,6 @@ top-level search functions that work with the default registry.
 
 from __future__ import annotations
 
-import re
 from typing import Optional
 
 from .local import LocalRegistry, AgentMeta, _parse_semver
