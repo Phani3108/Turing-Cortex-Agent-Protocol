@@ -66,9 +66,10 @@ class AuditLog:
         log.summary()           # aggregate stats
     """
 
-    def __init__(self, path: Optional[Path] = None):
+    def __init__(self, path: Optional[Path] = None, exporters: list | None = None):
         self._path = path
         self._events: list[AuditEvent] = []
+        self._exporters = exporters or []
 
         # If the file exists, load existing events
         if path and path.exists():
@@ -89,6 +90,8 @@ class AuditLog:
         if self._path:
             with open(self._path, "a") as f:
                 f.write(event.to_json() + "\n")
+        for exporter in self._exporters:
+            exporter.export_event(event)
 
     def events(self) -> list[AuditEvent]:
         """Return all recorded events."""
@@ -146,3 +149,29 @@ class AuditLog:
                     data = json.loads(line)
                     log._events.append(AuditEvent(**data))
         return log
+
+
+class RotatingAuditLog(AuditLog):
+    """AuditLog with file rotation when size exceeds max_bytes."""
+
+    def __init__(self, path: Path, *, max_bytes: int = 10_000_000, backup_count: int = 5):
+        self._max_bytes = max_bytes
+        self._backup_count = backup_count
+        super().__init__(path=path)
+
+    def write(self, event: AuditEvent) -> None:
+        super().write(event)
+        if self._path and self._path.exists() and self._path.stat().st_size > self._max_bytes:
+            self._rotate()
+
+    def _rotate(self) -> None:
+        for i in range(self._backup_count, 0, -1):
+            src = Path(f"{self._path}.{i}")
+            dst = Path(f"{self._path}.{i + 1}")
+            if i == self._backup_count and src.exists():
+                src.unlink()
+            elif src.exists():
+                src.rename(dst)
+        if self._path.exists():
+            self._path.rename(Path(f"{self._path}.1"))
+            self._path.touch()

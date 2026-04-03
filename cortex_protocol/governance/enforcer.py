@@ -13,6 +13,7 @@ Design:
 
 from __future__ import annotations
 
+import fnmatch
 import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -24,6 +25,30 @@ from .exceptions import (
     ApprovalRequired,
     ForbiddenActionDetected,
 )
+
+
+def _matches_approval_pattern(tool_name: str, patterns: list[str]) -> bool:
+    """Check if tool_name matches any approval pattern.
+
+    Patterns:
+      "*"         - matches everything
+      "db-*"      - fnmatch glob
+      "/^regex/"  - regex (between / delimiters)
+      "exact"     - exact string match
+    """
+    for pattern in patterns:
+        if pattern == "*":
+            return True
+        if pattern.startswith("/") and pattern.endswith("/") and len(pattern) > 2:
+            import re
+            if re.match(pattern[1:-1], tool_name):
+                return True
+        elif "*" in pattern or "?" in pattern or "[" in pattern:
+            if fnmatch.fnmatch(tool_name, pattern):
+                return True
+        elif tool_name == pattern:
+            return True
+    return False
 
 
 @dataclass
@@ -146,7 +171,7 @@ class PolicyEnforcer:
             else []
         )
 
-        if tool_name in require_approval:
+        if _matches_approval_pattern(tool_name, require_approval):
             if self._approval_handler is not None:
                 context = {
                     "run_id": self._run_id,
@@ -233,6 +258,74 @@ class PolicyEnforcer:
             run_id=self._run_id,
             event_type="tool_call",
             detail=f"Tool '{tool_name}' allowed",
+        )
+
+    # ------------------------------------------------------------------
+    # async require_approval — BLOCKING
+    # ------------------------------------------------------------------
+
+    async def async_check_tool_call(self, tool_name: str, tool_input: dict | None = None) -> EnforcementResult:
+        """Async version of check_tool_call. Awaits async approval handlers."""
+        import asyncio
+
+        tool_input = tool_input or {}
+        require_approval = (
+            self._spec.policies.require_approval
+            if self._spec.policies
+            else []
+        )
+
+        if not _matches_approval_pattern(tool_name, require_approval):
+            event = AuditEvent.now(
+                run_id=self._run_id, agent=self._spec.agent.name, turn=self._turn,
+                event_type="tool_call", tool_name=tool_name, tool_input=tool_input,
+                allowed=True, detail=f"Tool {tool_name} allowed",
+            )
+            self._audit.write(event)
+            return EnforcementResult(allowed=True, turn=self._turn, run_id=self._run_id, event_type="tool_call")
+
+        if self._approval_handler:
+            context = {"run_id": self._run_id, "turn": self._turn, "agent": self._spec.agent.name}
+            if asyncio.iscoroutinefunction(self._approval_handler):
+                approved = await self._approval_handler(tool_name, tool_input, context)
+            else:
+                approved = self._approval_handler(tool_name, tool_input, context)
+
+            if approved:
+                event = AuditEvent.now(
+                    run_id=self._run_id, agent=self._spec.agent.name, turn=self._turn,
+                    event_type="tool_approved", tool_name=tool_name, tool_input=tool_input,
+                    allowed=True, detail=f"Tool {tool_name} approved by handler",
+                )
+                self._audit.write(event)
+                return EnforcementResult(allowed=True, turn=self._turn, run_id=self._run_id, event_type="tool_approved")
+            else:
+                event = AuditEvent.now(
+                    run_id=self._run_id, agent=self._spec.agent.name, turn=self._turn,
+                    event_type="tool_denied", tool_name=tool_name, tool_input=tool_input,
+                    policy="require_approval", allowed=False,
+                    detail=f"Tool {tool_name} denied by handler",
+                )
+                self._audit.write(event)
+                raise ApprovalRequired(
+                    policy="require_approval",
+                    detail=f"Tool '{tool_name}' denied by approval handler",
+                    run_id=self._run_id, turn=self._turn,
+                    tool_name=tool_name, tool_input=tool_input,
+                )
+
+        event = AuditEvent.now(
+            run_id=self._run_id, agent=self._spec.agent.name, turn=self._turn,
+            event_type="tool_blocked", tool_name=tool_name, tool_input=tool_input,
+            policy="require_approval", allowed=False,
+            detail=f"Tool {tool_name} requires approval (no handler)",
+        )
+        self._audit.write(event)
+        raise ApprovalRequired(
+            policy="require_approval",
+            detail=f"Tool '{tool_name}' requires human approval",
+            run_id=self._run_id, turn=self._turn,
+            tool_name=tool_name, tool_input=tool_input or {},
         )
 
     # ------------------------------------------------------------------

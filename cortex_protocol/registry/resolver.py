@@ -132,15 +132,30 @@ def _parse_extends_ref(extends_str: str) -> tuple[str, str]:
     return name, version_spec
 
 
-def resolve_extends(spec: AgentSpec, registry: LocalRegistry) -> AgentSpec:
+def resolve_extends(
+    spec: AgentSpec,
+    registry: LocalRegistry,
+    *,
+    _visited: set | None = None,
+    max_depth: int = 10,
+) -> AgentSpec:
     """Resolve spec.extends from registry and merge into spec.
 
+    Supports multi-level inheritance with cycle detection.
     Returns merged spec. If base not found, returns spec unchanged.
     """
     if not spec.extends:
         return spec
+    if max_depth <= 0:
+        return spec
 
+    _visited = _visited if _visited is not None else set()
     name, version_spec = _parse_extends_ref(spec.extends)
+
+    if name in _visited:
+        raise ValueError(f"Circular extends detected: '{name}' already in chain {_visited}")
+    _visited.add(name)
+
     concrete = resolve_version(registry, name, version_spec)
     if concrete is None:
         return spec
@@ -148,6 +163,9 @@ def resolve_extends(spec: AgentSpec, registry: LocalRegistry) -> AgentSpec:
     base = registry.get(name, concrete)
     if base is None:
         return spec
+
+    # Recursively resolve the base's extends
+    base = resolve_extends(base, registry, _visited=_visited, max_depth=max_depth - 1)
 
     return merge_specs(base, spec)
 

@@ -363,7 +363,13 @@ def install(pack_name: str, output: str):
               help="Output path for the workflow file")
 @click.option("--spec", default="agent.yaml",
               help="Path to the agent spec file (relative to repo root)")
-def generate_ci(platform: str, output: str, spec: str):
+@click.option("--include-drift", is_flag=True, default=False,
+              help="Include a drift-check job in the workflow")
+@click.option("--drift-threshold", type=float, default=None,
+              help="Minimum compliance score for drift check (e.g. 0.9)")
+@click.option("--audit-log", default="./logs/audit_*.jsonl",
+              help="Audit log path or glob pattern for drift check")
+def generate_ci(platform: str, output: str, spec: str, include_drift: bool, drift_threshold: float, audit_log: str):
     """Generate a CI workflow that validates, lints, and compiles your agent spec.
 
     The generated workflow runs on every pull request and push to main.
@@ -372,10 +378,18 @@ def generate_ci(platform: str, output: str, spec: str):
     Example:
         cortex-protocol generate-ci
         cortex-protocol generate-ci --spec agents/my_agent.yaml
+        cortex-protocol generate-ci --include-drift --drift-threshold 0.9
     """
     from .ci import generate_github_action
 
-    content = generate_github_action(spec_path=spec)
+    drift_spec = spec if include_drift else None
+    threshold = drift_threshold if include_drift else None
+    content = generate_github_action(
+        spec_path=spec,
+        drift_spec=drift_spec,
+        drift_threshold=threshold,
+        audit_log_pattern=audit_log if include_drift else None,
+    )
     out_path = Path(output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(content)
@@ -758,12 +772,14 @@ def generate_a2a(file: str, framework: str, output: str, url: str):
 @main.command("compliance-report")
 @click.argument("log_file", type=click.Path(exists=True))
 @click.option("--standard", default="general",
-              type=click.Choice(["general", "soc2", "gdpr"]),
+              type=click.Choice(["general", "soc2", "gdpr", "hipaa", "pci-dss"]),
               help="Compliance standard to map to")
 @click.option("--output", "-o", default=None,
               help="Write report to file instead of stdout")
 @click.option("--agent-version", default="", help="Agent version to include in report")
-def compliance_report(log_file: str, standard: str, output: str, agent_version: str):
+@click.option("--spec", "spec_file", default=None, type=click.Path(exists=True),
+              help="Agent spec file for richer control evaluation")
+def compliance_report(log_file: str, standard: str, output: str, agent_version: str, spec_file: str):
     """Generate a compliance report from an audit log.
 
     Example:
@@ -775,7 +791,13 @@ def compliance_report(log_file: str, standard: str, output: str, agent_version: 
     from .governance.compliance import generate_compliance_report
 
     log = AuditLog.from_file(Path(log_file))
-    report = generate_compliance_report(log, standard=standard, agent_version=agent_version)
+    spec = None
+    if spec_file:
+        from .validator import validate_file
+        spec, errors = validate_file(spec_file)
+        if errors:
+            spec = None
+    report = generate_compliance_report(log, standard=standard, agent_version=agent_version, spec=spec)
 
     if output:
         Path(output).write_text(report)

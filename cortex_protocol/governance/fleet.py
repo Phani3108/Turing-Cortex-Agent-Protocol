@@ -36,6 +36,19 @@ class AgentSummary:
 
 
 @dataclass
+class TeamSummary:
+    team: str
+    agents: list[str]
+    total_events: int
+    violations: int
+    compliance_score: float
+
+    def to_dict(self) -> dict:
+        return {"team": self.team, "agents": self.agents, "total_events": self.total_events,
+                "violations": self.violations, "compliance_score": self.compliance_score}
+
+
+@dataclass
 class FleetSummary:
     total_agents: int
     total_runs: int
@@ -45,9 +58,10 @@ class FleetSummary:
     agents: list[AgentSummary]
     top_violators: list[AgentSummary]
     policies_triggered: dict[str, int]
+    teams: list[TeamSummary] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "total_agents": self.total_agents,
             "total_runs": self.total_runs,
             "total_events": self.total_events,
@@ -57,15 +71,31 @@ class FleetSummary:
             "top_violators": [a.to_dict() for a in self.top_violators],
             "policies_triggered": self.policies_triggered,
         }
+        if self.teams:
+            d["teams"] = [t.to_dict() for t in self.teams]
+        return d
 
 
-def aggregate_fleet_logs(log_paths: list[Path]) -> FleetSummary:
+def aggregate_fleet_logs(
+    log_paths: list[Path],
+    *,
+    team_map: dict[str, str] | None = None,
+    time_min: str | None = None,
+    time_max: str | None = None,
+) -> FleetSummary:
     """Read multiple JSONL audit logs and aggregate."""
     agent_data: dict[str, dict] = {}
 
     for path in log_paths:
         log = AuditLog.from_file(path)
         events = log.events()
+
+        # Time filtering
+        if time_min:
+            events = [e for e in events if e.timestamp >= time_min]
+        if time_max:
+            events = [e for e in events if e.timestamp <= time_max]
+
         if not events:
             continue
 
@@ -106,6 +136,26 @@ def aggregate_fleet_logs(log_paths: list[Path]) -> FleetSummary:
     fleet_score = 1.0 - (total_violations / total_events) if total_events else 1.0
     top_violators = sorted(agents, key=lambda a: a.violations, reverse=True)[:5]
 
+    # Team grouping
+    teams: list[TeamSummary] = []
+    if team_map:
+        team_agents: dict[str, list[str]] = {}
+        team_events: dict[str, int] = {}
+        team_violations: dict[str, int] = {}
+        for agent in agents:
+            team_name = team_map.get(agent.name, "unassigned")
+            team_agents.setdefault(team_name, []).append(agent.name)
+            team_events[team_name] = team_events.get(team_name, 0) + agent.total_events
+            team_violations[team_name] = team_violations.get(team_name, 0) + agent.violations
+        for t_name, t_agents in team_agents.items():
+            t_total = team_events[t_name]
+            t_violations = team_violations[t_name]
+            t_score = 1.0 - (t_violations / t_total) if t_total else 1.0
+            teams.append(TeamSummary(
+                team=t_name, agents=t_agents, total_events=t_total,
+                violations=t_violations, compliance_score=round(t_score, 3),
+            ))
+
     return FleetSummary(
         total_agents=len(agents),
         total_runs=total_runs,
@@ -115,6 +165,7 @@ def aggregate_fleet_logs(log_paths: list[Path]) -> FleetSummary:
         agents=agents,
         top_violators=top_violators,
         policies_triggered=all_policies,
+        teams=teams,
     )
 
 

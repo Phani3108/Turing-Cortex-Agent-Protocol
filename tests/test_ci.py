@@ -75,3 +75,56 @@ class TestGenerateGitHubAction:
     def test_upload_artifact_step_present(self):
         result = generate_github_action()
         assert "upload-artifact" in result
+
+
+class TestDriftJob:
+    def test_drift_job_present_when_params_set(self):
+        result = generate_github_action(
+            drift_spec="agent.yaml", drift_threshold=0.9, audit_log_pattern="logs/*.jsonl"
+        )
+        data = yaml.safe_load(result)
+        assert "drift" in data["jobs"]
+
+    def test_drift_job_absent_when_no_params(self):
+        result = generate_github_action()
+        data = yaml.safe_load(result)
+        assert "drift" not in data["jobs"]
+
+    def test_drift_job_depends_on_validate(self):
+        result = generate_github_action(
+            drift_spec="agent.yaml", drift_threshold=0.9
+        )
+        data = yaml.safe_load(result)
+        assert data["jobs"]["drift"]["needs"] == "validate-and-lint"
+
+    def test_drift_job_only_on_push(self):
+        result = generate_github_action(
+            drift_spec="agent.yaml", drift_threshold=0.9
+        )
+        data = yaml.safe_load(result)
+        assert "push" in data["jobs"]["drift"]["if"]
+
+
+class TestCompositeAction:
+    def test_composite_action_valid_yaml(self):
+        from cortex_protocol.ci import generate_composite_action
+        result = generate_composite_action()
+        data = yaml.safe_load(result)
+        assert data is not None
+
+    def test_composite_action_has_inputs(self):
+        from cortex_protocol.ci import generate_composite_action
+        result = generate_composite_action()
+        data = yaml.safe_load(result)
+        assert "inputs" in data
+        assert "spec" in data["inputs"]
+        assert "fail-on-lint" in data["inputs"]
+        assert "drift-threshold" in data["inputs"]
+        assert "audit-log" in data["inputs"]
+
+    def test_composite_action_has_runs(self):
+        from cortex_protocol.ci import generate_composite_action
+        result = generate_composite_action()
+        data = yaml.safe_load(result)
+        assert data["runs"]["using"] == "composite"
+        assert len(data["runs"]["steps"]) >= 3

@@ -8,7 +8,12 @@ agent specs on every pull request and push.
 from __future__ import annotations
 
 
-def generate_github_action(spec_path: str = "agent.yaml") -> str:
+def generate_github_action(
+    spec_path: str = "agent.yaml",
+    drift_spec: str | None = None,
+    drift_threshold: float | None = None,
+    audit_log_pattern: str | None = None,
+) -> str:
     """
     Generate a GitHub Actions workflow for Cortex Protocol.
 
@@ -120,4 +125,77 @@ def generate_github_action(spec_path: str = "agent.yaml") -> str:
     lines.append("              body")
     lines.append("            });")
 
+    # Optional drift-check job
+    if drift_spec and drift_threshold is not None:
+        log_pattern = audit_log_pattern or "./logs/audit_*.jsonl"
+        lines.append("")
+        lines.append("  drift:")
+        lines.append("    name: Drift Check")
+        lines.append("    runs-on: ubuntu-latest")
+        lines.append("    needs: validate-and-lint")
+        lines.append("    if: github.event_name == 'push'")
+        lines.append("")
+        lines.append("    steps:")
+        lines.append("      - uses: actions/checkout@v4")
+        lines.append("")
+        lines.append("      - uses: actions/setup-python@v5")
+        lines.append("        with:")
+        lines.append("          python-version: '3.12'")
+        lines.append("")
+        lines.append("      - name: Install cortex-protocol")
+        lines.append("        run: pip install cortex-protocol")
+        lines.append("")
+        lines.append("      - name: Run drift check")
+        lines.append(f"        run: cortex-protocol drift-check {drift_spec} {log_pattern} --fail-on {drift_threshold}")
+
+    return "\n".join(lines) + "\n"
+
+
+def generate_composite_action(
+    spec_input: str = "spec",
+    fail_on_lint: str = "error",
+) -> str:
+    """Generate a reusable GitHub Action action.yml."""
+    lines: list[str] = []
+    lines.append("name: 'Cortex Protocol'")
+    lines.append("description: 'Validate, lint, and drift-check an agent spec'")
+    lines.append("")
+    lines.append("inputs:")
+    lines.append(f"  {spec_input}:")
+    lines.append("    description: 'Path to the agent spec file'")
+    lines.append("    required: true")
+    lines.append("    default: 'agent.yaml'")
+    lines.append("  fail-on-lint:")
+    lines.append("    description: 'Lint severity that fails the build'")
+    lines.append("    required: false")
+    lines.append(f"    default: '{fail_on_lint}'")
+    lines.append("  drift-threshold:")
+    lines.append("    description: 'Minimum compliance score (0.0-1.0) for drift check'")
+    lines.append("    required: false")
+    lines.append("    default: ''")
+    lines.append("  audit-log:")
+    lines.append("    description: 'Path or glob pattern for audit log files'")
+    lines.append("    required: false")
+    lines.append("    default: './logs/audit_*.jsonl'")
+    lines.append("")
+    lines.append("runs:")
+    lines.append("  using: 'composite'")
+    lines.append("  steps:")
+    lines.append("    - name: Install cortex-protocol")
+    lines.append("      shell: bash")
+    lines.append("      run: pip install cortex-protocol")
+    lines.append("")
+    lines.append("    - name: Validate spec")
+    lines.append("      shell: bash")
+    lines.append(f"      run: cortex-protocol validate ${{{{ inputs.{spec_input} }}}}")
+    lines.append("")
+    lines.append("    - name: Lint spec")
+    lines.append("      shell: bash")
+    lines.append(f"      run: cortex-protocol lint ${{{{ inputs.{spec_input} }}}} --fail-on ${{{{ inputs.fail-on-lint }}}}")
+    lines.append("")
+    lines.append("    - name: Drift check")
+    lines.append("      shell: bash")
+    lines.append("      if: inputs.drift-threshold != ''")
+    lines.append(f"      run: cortex-protocol drift-check ${{{{ inputs.{spec_input} }}}} ${{{{ inputs.audit-log }}}} --fail-on ${{{{ inputs.drift-threshold }}}}")
+    lines.append("")
     return "\n".join(lines) + "\n"

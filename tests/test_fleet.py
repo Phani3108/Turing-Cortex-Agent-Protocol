@@ -120,3 +120,50 @@ def test_to_dict_structure():
         assert "agents" in d
         assert "top_violators" in d
         assert "policies_triggered" in d
+
+
+def test_team_map_groups_agents():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_a = Path(tmpdir) / "a.jsonl"
+        log_b = Path(tmpdir) / "b.jsonl"
+        _write_log(log_a, [_event(agent="agent-a")])
+        _write_log(log_b, [_event(agent="agent-b")])
+        team_map = {"agent-a": "platform", "agent-b": "platform"}
+        summary = aggregate_fleet_logs([log_a, log_b], team_map=team_map)
+        assert len(summary.teams) == 1
+        assert summary.teams[0].team == "platform"
+        assert set(summary.teams[0].agents) == {"agent-a", "agent-b"}
+
+
+def test_time_min_filters_events():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_path = Path(tmpdir) / "log.jsonl"
+        log = AuditLog(path=log_path)
+        e1 = AuditEvent(timestamp="2025-01-01T00:00:00+00:00", run_id="r1", agent="a", turn=1, event_type="tool_call", allowed=True)
+        e2 = AuditEvent(timestamp="2025-06-01T00:00:00+00:00", run_id="r2", agent="a", turn=1, event_type="tool_call", allowed=True)
+        log.write(e1)
+        log.write(e2)
+        summary = aggregate_fleet_logs([log_path], time_min="2025-03-01")
+        assert summary.total_events == 1
+
+
+def test_time_max_filters_events():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_path = Path(tmpdir) / "log.jsonl"
+        log = AuditLog(path=log_path)
+        e1 = AuditEvent(timestamp="2025-01-01T00:00:00+00:00", run_id="r1", agent="a", turn=1, event_type="tool_call", allowed=True)
+        e2 = AuditEvent(timestamp="2025-06-01T00:00:00+00:00", run_id="r2", agent="a", turn=1, event_type="tool_call", allowed=True)
+        log.write(e1)
+        log.write(e2)
+        summary = aggregate_fleet_logs([log_path], time_max="2025-03-01")
+        assert summary.total_events == 1
+
+
+def test_fleet_summary_teams_in_dict():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_a = Path(tmpdir) / "a.jsonl"
+        _write_log(log_a, [_event(agent="agent-a")])
+        summary = aggregate_fleet_logs([log_a], team_map={"agent-a": "ops"})
+        d = summary.to_dict()
+        assert "teams" in d
+        assert d["teams"][0]["team"] == "ops"
