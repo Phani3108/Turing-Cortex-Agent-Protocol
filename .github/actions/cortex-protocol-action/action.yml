@@ -1,0 +1,104 @@
+name: "Turing (Cortex Protocol)"
+description: >
+  Validate, lint, and (optionally) drift-check a Cortex Protocol agent spec
+  as part of a CI workflow. Installs cortex-protocol into an isolated pip
+  environment and runs the governance checks you pick.
+author: "Phani Marupaka"
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  spec:
+    description: "Path to the agent spec YAML (relative to repo root)."
+    required: true
+  version:
+    description: "Version of cortex-protocol to install. Defaults to the latest 0.4.x."
+    required: false
+    default: "0.4.*"
+  fail-on:
+    description: "Lint severity gate. One of: error | warning | any | off"
+    required: false
+    default: "error"
+  audit-log:
+    description: "Path to an audit log file. If set, drift-check runs too."
+    required: false
+    default: ""
+  drift-threshold:
+    description: "Minimum drift compliance score (0.0-1.0) before the job fails."
+    required: false
+    default: "0.9"
+  compliance-standard:
+    description: "Compliance report standard. One of: soc2 | hipaa | pci-dss | gdpr | off"
+    required: false
+    default: "off"
+
+outputs:
+  lint-score:
+    description: "0-100 lint score for the spec."
+    value: ${{ steps.lint.outputs.score }}
+  lint-grade:
+    description: "Letter grade (A-F) for the spec."
+    value: ${{ steps.lint.outputs.grade }}
+  drift-score:
+    description: "0.0-1.0 drift compliance score (empty if drift-check was skipped)."
+    value: ${{ steps.drift.outputs.score }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: pip
+
+    - name: Install Turing
+      shell: bash
+      run: |
+        python -m pip install --quiet --upgrade pip
+        python -m pip install --quiet "cortex-protocol==${{ inputs.version }}"
+
+    - name: Validate
+      shell: bash
+      run: cortex-protocol validate "${{ inputs.spec }}"
+
+    - name: Lint
+      id: lint
+      shell: bash
+      run: |
+        set -o pipefail
+        OUT=$(cortex-protocol lint "${{ inputs.spec }}" --format json)
+        echo "$OUT"
+        SCORE=$(echo "$OUT" | python -c "import json,sys;print(json.load(sys.stdin)['score'])")
+        GRADE=$(echo "$OUT" | python -c "import json,sys;print(json.load(sys.stdin)['grade'])")
+        echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+        echo "grade=$GRADE" >> "$GITHUB_OUTPUT"
+        echo "| spec | score | grade |" >> "$GITHUB_STEP_SUMMARY"
+        echo "|------|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+        echo "| ${{ inputs.spec }} | $SCORE | $GRADE |" >> "$GITHUB_STEP_SUMMARY"
+        if [ "${{ inputs.fail-on }}" != "off" ]; then
+          cortex-protocol lint "${{ inputs.spec }}" --fail-on "${{ inputs.fail-on }}"
+        fi
+
+    - name: Drift check
+      id: drift
+      if: inputs.audit-log != ''
+      shell: bash
+      run: |
+        set -o pipefail
+        OUT=$(cortex-protocol drift-check "${{ inputs.spec }}" "${{ inputs.audit-log }}" --format json)
+        echo "$OUT"
+        SCORE=$(echo "$OUT" | python -c "import json,sys;print(json.load(sys.stdin)['compliance_score'])")
+        echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+        cortex-protocol drift-check "${{ inputs.spec }}" "${{ inputs.audit-log }}" \
+          --fail-on "${{ inputs.drift-threshold }}"
+
+    - name: Compliance report
+      if: inputs.compliance-standard != 'off' && inputs.audit-log != ''
+      shell: bash
+      run: |
+        cortex-protocol compliance-report "${{ inputs.audit-log }}" \
+          --standard "${{ inputs.compliance-standard }}" \
+          --spec "${{ inputs.spec }}" \
+          >> "$GITHUB_STEP_SUMMARY"

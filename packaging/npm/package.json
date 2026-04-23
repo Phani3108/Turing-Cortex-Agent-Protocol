@@ -1,0 +1,39 @@
+{
+  "name": "cortex-protocol",
+  "version": "0.4.0",
+  "description": "Turing (Cortex Protocol) — agent governance-as-code. Enforce policies, audit everything, compile to any runtime.",
+  "keywords": [
+    "ai",
+    "agents",
+    "governance",
+    "compliance",
+    "mcp",
+    "policy",
+    "audit"
+  ],
+  "homepage": "https://github.com/Phani3108/Turing-Cortex-Agent-Protocol",
+  "bugs": "https://github.com/Phani3108/Turing-Cortex-Agent-Protocol/issues",
+  "license": "MIT",
+  "author": "Phani Marupaka <phani@cortexprotocol.dev>",
+  "bin": {
+    "cortex-protocol": "bin/cortex-protocol.js",
+    "turing": "bin/cortex-protocol.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Phani3108/Turing-Cortex-Agent-Protocol.git",
+    "directory": "packaging/npm"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ]
+}

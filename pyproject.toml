@@ -4,13 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cortex-protocol"
-version = "0.3.0"
-description = "Agent governance-as-code — enforce policies, audit everything, compile to any runtime"
+version = "0.6.0.dev0"
+description = "Turing — agent governance-as-code. Enforce policies, audit everything, compile to any runtime."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
     {name = "Phani Marupaka", email = "phani@cortexprotocol.dev"},
+]
+keywords = [
+    "ai", "agents", "governance", "compliance", "mcp",
+    "policy", "audit", "langgraph", "crewai", "semantic-kernel",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
     "pydantic>=2.0",
@@ -20,16 +35,62 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Runtime extras — each enables one integration surface.
+mcp         = ["mcp>=1.2,<2.0"]
+openai      = ["openai-agents[mcp]>=0.1", "openai>=1.0"]
+claude      = ["anthropic>=0.40"]
+langgraph   = ["langgraph>=0.2", "langchain-mcp-adapters>=0.1"]
+crewai      = ["crewai-tools[mcp]>=0.14"]
+sk          = ["semantic-kernel[mcp]>=1.0"]
+otel        = ["opentelemetry-sdk>=1.25", "opentelemetry-exporter-otlp>=1.25"]
+enterprise  = ["cryptography>=42", "PyJWT>=2.8"]
+
+# Convenience meta-extras.
+all = [
+    "cortex-protocol[mcp]",
+    "cortex-protocol[openai]",
+    "cortex-protocol[claude]",
+    "cortex-protocol[langgraph]",
+    "cortex-protocol[crewai]",
+    "cortex-protocol[sk]",
+    "cortex-protocol[otel]",
+    "cortex-protocol[enterprise]",
+]
+
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "build>=1.2",
+    "twine>=5.0",
 ]
+
+[project.urls]
+Homepage      = "https://github.com/Phani3108/Turing-Cortex-Agent-Protocol"
+Documentation = "https://github.com/Phani3108/Turing-Cortex-Agent-Protocol#readme"
+Issues        = "https://github.com/Phani3108/Turing-Cortex-Agent-Protocol/issues"
+Changelog     = "https://github.com/Phani3108/Turing-Cortex-Agent-Protocol/releases"
 
 [project.scripts]
 cortex-protocol = "cortex_protocol.cli:main"
+turing          = "cortex_protocol.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["cortex_protocol*"]
 
+[tool.setuptools.package-data]
+cortex_protocol = ["simulate/scenarios/*.yaml", "simulate/scenarios/*.yml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["E402"]

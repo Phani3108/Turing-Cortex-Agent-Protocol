@@ -1,0 +1,21 @@
+# Example workflow that consumers can copy into their own repos to gate
+# agent-spec changes. Runs on PRs that touch an agent spec.
+#
+# This file is NOT active in Turing's own CI; the `on: workflow_dispatch`
+# switch keeps it dormant in this repo while still being documented in
+# .github/workflows/ where users can find and copy it.
+name: Example — gate agent specs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cortex-protocol-action
+        with:
+          spec: examples/support_agent.yaml
+          fail-on: error
+          compliance-standard: off

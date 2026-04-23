@@ -23,12 +23,23 @@ class AuditEvent:
     agent: str                           # agent name from spec
     turn: int                            # which turn in the run
     event_type: str                      # tool_call | tool_blocked | response |
-                                         # forbidden_action | max_turns | escalation
+                                         # forbidden_action | max_turns | escalation |
+                                         # usage | budget_blocked
     allowed: bool                        # was the action permitted?
     detail: str = ""                     # human-readable explanation
     policy: Optional[str] = None         # which policy field triggered
     tool_name: Optional[str] = None      # for tool events
     tool_input: Optional[dict] = None    # for tool events
+    # Cost governance fields (v0.4+). All optional so older logs parse cleanly.
+    model: Optional[str] = None          # the model that produced this turn's output
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
+    run_cost_usd: Optional[float] = None   # running total at the time of this event
+    # Signed-audit fields (v0.5+). Populated only by SignedAuditLog.
+    chain_index: Optional[int] = None      # 0-based position in the chain
+    prev_hash: Optional[str] = None        # sha256(prev canonical event bytes) or "GENESIS"
+    signature: Optional[str] = None        # ed25519:<urlsafe-b64-nopad>
 
     def to_dict(self) -> dict:
         d = asdict(self)

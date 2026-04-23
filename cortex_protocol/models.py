@@ -41,6 +41,14 @@ class PolicySpec(BaseModel):
     forbidden_actions: list[str] = Field(default_factory=list)
     escalation: EscalationPolicy = Field(default_factory=EscalationPolicy)
     from_template: Optional[str | list[str]] = None
+    # v0.3+: cost governance. All optional; enforcement is skipped when unset.
+    max_cost_usd: float | None = None
+    max_tokens_per_run: int | None = None
+    max_tool_calls_per_run: int | None = None
+    cost_breakdown_required: bool = False
+    # v0.6+: policy-as-code DSL rules. First-match wins; evaluated after
+    # budget checks and before the static require_approval list.
+    rules: list[dict] = Field(default_factory=list)
 
 
 class ModelConfig(BaseModel):
@@ -129,6 +137,17 @@ def merge_specs(base: "AgentSpec", override: "AgentSpec") -> "AgentSpec":
         require_approval=list(set(base_p.require_approval) | set(over_p.require_approval)),
         forbidden_actions=list(set(base_p.forbidden_actions) | set(over_p.forbidden_actions)),
         escalation=over_p.escalation if over_p.escalation.trigger else base_p.escalation,
+        max_cost_usd=(
+            over_p.max_cost_usd if over_p.max_cost_usd is not None else base_p.max_cost_usd
+        ),
+        max_tokens_per_run=(
+            over_p.max_tokens_per_run if over_p.max_tokens_per_run is not None else base_p.max_tokens_per_run
+        ),
+        max_tool_calls_per_run=(
+            over_p.max_tool_calls_per_run if over_p.max_tool_calls_per_run is not None else base_p.max_tool_calls_per_run
+        ),
+        cost_breakdown_required=over_p.cost_breakdown_required or base_p.cost_breakdown_required,
+        rules=list(base_p.rules) + list(over_p.rules),
     )
 
     return AgentSpec(

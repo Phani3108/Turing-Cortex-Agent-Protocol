@@ -57,3 +57,33 @@ class ForbiddenActionDetected(PolicyViolation):
     def __post_init__(self):
         if not self.policy:
             self.policy = "forbidden_actions"
+
+
+@dataclass
+class RuleDenied(PolicyViolation):
+    """Raised when a DSL rule with action=deny matches a tool call."""
+
+    tool_name: str = ""
+    tool_input: dict = field(default_factory=dict)
+    rule_source: str = ""   # the `when:` expression that fired
+
+    def __post_init__(self):
+        if not self.policy:
+            self.policy = "rule:deny"
+
+
+@dataclass
+class BudgetExceeded(PolicyViolation):
+    """Raised when a run exceeds a cost, token, or tool-call budget.
+
+    Fail-closed: enforcement raises this before the offending call runs,
+    so a single over-budget request does not slip through.
+    """
+
+    budget_type: str = ""    # "cost_usd" | "tokens" | "tool_calls"
+    limit: float = 0.0       # the policy cap (USD for cost, count otherwise)
+    observed: float = 0.0    # current accumulated value at the time of the check
+
+    def __post_init__(self):
+        if not self.policy:
+            self.policy = "budget"

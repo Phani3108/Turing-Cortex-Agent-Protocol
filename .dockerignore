@@ -1,0 +1,26 @@
+# Everything that doesn't belong in the build context.
+.git
+.gitignore
+.github
+.claude
+.deepeval
+.venv
+.env*
+dist
+build
+*.egg-info
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+tests
+packaging
+docs
+examples
+*.md
+!README.md
+Dockerfile
+.dockerignore

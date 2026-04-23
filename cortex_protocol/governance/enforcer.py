@@ -20,10 +20,14 @@ from typing import Callable, Optional
 
 from ..models import AgentSpec
 from .audit import AuditEvent, AuditLog
+from .cost import CostTracker, ModelPricing
+from .dsl import RuleAction, RuleSet
 from .exceptions import (
     MaxTurnsExceeded,
     ApprovalRequired,
     ForbiddenActionDetected,
+    BudgetExceeded,
+    RuleDenied,
 )
 
 
@@ -90,6 +94,8 @@ class PolicyEnforcer:
         audit_log: Optional[AuditLog] = None,
         strict_forbidden: bool = False,
         approval_handler: Optional[Callable[[str, dict, dict], bool]] = None,
+        pricing: Optional[ModelPricing] = None,
+        cost_tracker: Optional[CostTracker] = None,
     ):
         self._spec = spec
         self._audit = audit_log or AuditLog()
@@ -97,6 +103,18 @@ class PolicyEnforcer:
         self._approval_handler = approval_handler
         self._run_id = uuid.uuid4().hex[:12]
         self._turn = 0
+        self._cost = cost_tracker or CostTracker(pricing=pricing)
+        # Compile DSL rules once. Bad rules fail at spec-load time.
+        raw_rules = list(spec.policies.rules) if spec.policies else []
+        self._rules = RuleSet.from_list(raw_rules)
+
+    @property
+    def cost(self) -> CostTracker:
+        return self._cost
+
+    @property
+    def rules(self) -> RuleSet:
+        return self._rules
 
     @property
     def turn_count(self) -> int:
@@ -155,6 +173,249 @@ class PolicyEnforcer:
         )
 
     # ------------------------------------------------------------------
+    # cost / token / tool-call budgets — BLOCKING
+    # ------------------------------------------------------------------
+
+    def _budget_check(self, *, projected_cost: float = 0.0, projected_tokens: int = 0,
+                      projecting_tool_call: bool = False) -> None:
+        """Raise BudgetExceeded if the projected call would breach a policy cap."""
+        policies = self._spec.policies
+        if policies is None:
+            return
+
+        if policies.max_cost_usd is not None and self._cost.would_exceed_cost(
+            policies.max_cost_usd, projected_cost
+        ):
+            observed = self._cost.snapshot.total_cost_usd + projected_cost
+            self._audit.write(AuditEvent.now(
+                run_id=self._run_id,
+                agent=self._spec.agent.name,
+                turn=self._turn,
+                event_type="budget_blocked",
+                allowed=False,
+                policy="max_cost_usd",
+                detail=f"Projected cost ${observed:.4f} exceeds cap ${policies.max_cost_usd:.4f}",
+                run_cost_usd=self._cost.snapshot.total_cost_usd,
+            ))
+            raise BudgetExceeded(
+                policy="max_cost_usd",
+                detail=f"Cost cap ${policies.max_cost_usd:.4f} exceeded (observed ${observed:.4f})",
+                run_id=self._run_id, turn=self._turn,
+                budget_type="cost_usd",
+                limit=policies.max_cost_usd,
+                observed=observed,
+            )
+
+        if policies.max_tokens_per_run is not None and self._cost.would_exceed_tokens(
+            policies.max_tokens_per_run, projected_tokens
+        ):
+            observed = self._cost.snapshot.total_tokens + projected_tokens
+            self._audit.write(AuditEvent.now(
+                run_id=self._run_id,
+                agent=self._spec.agent.name,
+                turn=self._turn,
+                event_type="budget_blocked",
+                allowed=False,
+                policy="max_tokens_per_run",
+                detail=f"Projected tokens {observed} exceeds cap {policies.max_tokens_per_run}",
+                run_cost_usd=self._cost.snapshot.total_cost_usd,
+            ))
+            raise BudgetExceeded(
+                policy="max_tokens_per_run",
+                detail=f"Token cap {policies.max_tokens_per_run} exceeded (observed {observed})",
+                run_id=self._run_id, turn=self._turn,
+                budget_type="tokens",
+                limit=float(policies.max_tokens_per_run),
+                observed=float(observed),
+            )
+
+        if projecting_tool_call and policies.max_tool_calls_per_run is not None \
+                and self._cost.would_exceed_tool_calls(policies.max_tool_calls_per_run):
+            observed = self._cost.snapshot.total_tool_calls + 1
+            self._audit.write(AuditEvent.now(
+                run_id=self._run_id,
+                agent=self._spec.agent.name,
+                turn=self._turn,
+                event_type="budget_blocked",
+                allowed=False,
+                policy="max_tool_calls_per_run",
+                detail=f"Projected tool calls {observed} exceeds cap {policies.max_tool_calls_per_run}",
+                run_cost_usd=self._cost.snapshot.total_cost_usd,
+            ))
+            raise BudgetExceeded(
+                policy="max_tool_calls_per_run",
+                detail=f"Tool-call cap {policies.max_tool_calls_per_run} exceeded (observed {observed})",
+                run_id=self._run_id, turn=self._turn,
+                budget_type="tool_calls",
+                limit=float(policies.max_tool_calls_per_run),
+                observed=float(observed),
+            )
+
+    def _rule_context(self, tool_name: str, tool_input: dict) -> dict:
+        """Snapshot state the DSL can read. Never leak live objects.
+
+        Keys:
+          tool_name   : str
+          tool_input  : dict
+          turn        : int
+          run_id      : str
+          agent       : str
+          env         : str (from agent metadata.environment, if set)
+          tags        : list[str] (from agent metadata.tags)
+          run_cost_usd, total_tokens, total_tool_calls
+        """
+        meta = self._spec.metadata
+        return {
+            "tool_name": tool_name,
+            "tool_input": dict(tool_input),
+            "turn": self._turn,
+            "run_id": self._run_id,
+            "agent": self._spec.agent.name,
+            "env": meta.environment if meta else "",
+            "tags": list(meta.tags) if meta else [],
+            "run_cost_usd": self._cost.snapshot.total_cost_usd,
+            "total_tokens": self._cost.snapshot.total_tokens,
+            "total_tool_calls": self._cost.snapshot.total_tool_calls,
+        }
+
+    def _apply_dsl_rules(self, tool_name: str, tool_input: dict) -> bool:
+        """Evaluate compiled DSL rules. Returns True iff an `allow` fired.
+
+        Side effects:
+          - Raises `RuleDenied` on a `deny` match.
+          - Appends to the audit trail.
+          - For `require_approval` matches, invokes the approval handler
+            (or raises `ApprovalRequired` if none is set).
+        """
+        if not self._rules.rules:
+            return False
+        ctx = self._rule_context(tool_name, tool_input)
+        decision = self._rules.evaluate(ctx)
+
+        if decision.action is RuleAction.ALLOW:
+            if decision.rule_source:
+                self._audit.write(AuditEvent.now(
+                    run_id=self._run_id, agent=self._spec.agent.name,
+                    turn=self._turn, event_type="rule_allow",
+                    allowed=True, policy="rule:allow",
+                    tool_name=tool_name, tool_input=tool_input,
+                    detail=decision.reason or f"allowed by rule: {decision.rule_source}",
+                ))
+                return True
+            return False
+
+        if decision.action is RuleAction.DENY:
+            self._audit.write(AuditEvent.now(
+                run_id=self._run_id, agent=self._spec.agent.name,
+                turn=self._turn, event_type="rule_denied",
+                allowed=False, policy="rule:deny",
+                tool_name=tool_name, tool_input=tool_input,
+                detail=decision.reason or f"denied by rule: {decision.rule_source}",
+            ))
+            raise RuleDenied(
+                policy="rule:deny",
+                detail=decision.reason or f"Denied by DSL rule: {decision.rule_source}",
+                run_id=self._run_id, turn=self._turn,
+                tool_name=tool_name, tool_input=tool_input,
+                rule_source=decision.rule_source,
+            )
+
+        if decision.action is RuleAction.REQUIRE_APPROVAL:
+            if self._approval_handler is None:
+                self._audit.write(AuditEvent.now(
+                    run_id=self._run_id, agent=self._spec.agent.name,
+                    turn=self._turn, event_type="tool_blocked",
+                    allowed=False, policy="rule:require_approval",
+                    tool_name=tool_name, tool_input=tool_input,
+                    detail=decision.reason or f"approval required by rule: {decision.rule_source}",
+                ))
+                raise ApprovalRequired(
+                    policy="rule:require_approval",
+                    detail=decision.reason or f"DSL rule requires approval: {decision.rule_source}",
+                    run_id=self._run_id, turn=self._turn,
+                    tool_name=tool_name, tool_input=tool_input,
+                )
+            handler_ctx = {"run_id": self._run_id, "turn": self._turn,
+                           "agent": self._spec.agent.name,
+                           "rule_source": decision.rule_source,
+                           "rule_reason": decision.reason}
+            approved = self._approval_handler(tool_name, tool_input, handler_ctx)
+            event_type = "tool_approved" if approved else "tool_denied"
+            self._audit.write(AuditEvent.now(
+                run_id=self._run_id, agent=self._spec.agent.name,
+                turn=self._turn, event_type=event_type,
+                allowed=approved, policy="rule:require_approval",
+                tool_name=tool_name, tool_input=tool_input,
+                detail=decision.reason or f"rule: {decision.rule_source}",
+            ))
+            if approved:
+                # Don't bump the tool-call counter here — the caller's
+                # "Tool call allowed" path does the single canonical record.
+                return True
+            raise ApprovalRequired(
+                policy="rule:require_approval",
+                detail=decision.reason or f"Approval denied for rule: {decision.rule_source}",
+                run_id=self._run_id, turn=self._turn,
+                tool_name=tool_name, tool_input=tool_input,
+            )
+
+        return False
+
+    def record_usage(
+        self,
+        *,
+        model: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cost_usd: Optional[float] = None,
+        tool_name: Optional[str] = None,
+    ) -> EnforcementResult:
+        """Record token + cost consumption after an LLM call or tool invocation.
+
+        Writes a `usage` audit event and raises BudgetExceeded if the newly
+        recorded usage tips the run over a configured cap. Call this AFTER
+        the model response arrives (or after a tool returns its cost).
+        """
+        model_name = model or self._spec.model.preferred
+        sample = self._cost.record(
+            model=model_name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+            tool_name=tool_name,
+            turn=self._turn,
+        )
+
+        self._audit.write(AuditEvent.now(
+            run_id=self._run_id,
+            agent=self._spec.agent.name,
+            turn=self._turn,
+            event_type="usage",
+            allowed=True,
+            tool_name=tool_name,
+            detail=(
+                f"Usage: {input_tokens} in + {output_tokens} out tokens, "
+                f"${sample.cost_usd:.6f} ({model_name})"
+            ),
+            model=model_name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=sample.cost_usd,
+            run_cost_usd=self._cost.snapshot.total_cost_usd,
+        ))
+
+        # After recording, re-check caps. No projection — we're already past.
+        self._budget_check()
+
+        return EnforcementResult(
+            allowed=True,
+            turn=self._turn,
+            run_id=self._run_id,
+            event_type="usage",
+            detail=f"run_cost_usd={self._cost.snapshot.total_cost_usd:.6f}",
+        )
+
+    # ------------------------------------------------------------------
     # require_approval — BLOCKING
     # ------------------------------------------------------------------
 
@@ -165,11 +426,24 @@ class PolicyEnforcer:
         Logs the check regardless.
         """
         tool_input = tool_input or {}
+        # Fail-closed budget check before we honor the call (no spend to record yet;
+        # we only care about the tool-call count cap here — cost/token caps are
+        # enforced post-hoc via record_usage).
+        self._budget_check(projecting_tool_call=True)
+
+        # DSL rules next. A deny raises directly; require_approval promotes
+        # this tool into the approval pipeline for the current call; allow
+        # short-circuits past the static require_approval list.
+        dsl_allow_override = self._apply_dsl_rules(tool_name, tool_input)
+
         require_approval = (
             self._spec.policies.require_approval
             if self._spec.policies
             else []
         )
+        if dsl_allow_override:
+            # Treat this tool as explicitly allowed; skip static gating.
+            require_approval = []
 
         if _matches_approval_pattern(tool_name, require_approval):
             if self._approval_handler is not None:
@@ -180,6 +454,7 @@ class PolicyEnforcer:
                 }
                 approved = self._approval_handler(tool_name, tool_input, context)
                 if approved:
+                    self._cost.record_tool_call(tool_name, turn=self._turn)
                     self._audit.write(AuditEvent.now(
                         run_id=self._run_id,
                         agent=self._spec.agent.name,
@@ -241,6 +516,7 @@ class PolicyEnforcer:
             raise violation
 
         # Tool call allowed
+        self._cost.record_tool_call(tool_name, turn=self._turn)
         self._audit.write(AuditEvent.now(
             run_id=self._run_id,
             agent=self._spec.agent.name,
@@ -269,13 +545,22 @@ class PolicyEnforcer:
         import asyncio
 
         tool_input = tool_input or {}
+        self._budget_check(projecting_tool_call=True)
+
+        # DSL rules. async path uses the same sync evaluator for now; we
+        # don't yet support async DSL builtins or async approval from rules.
+        dsl_allow_override = self._apply_dsl_rules(tool_name, tool_input)
+
         require_approval = (
             self._spec.policies.require_approval
             if self._spec.policies
             else []
         )
+        if dsl_allow_override:
+            require_approval = []
 
         if not _matches_approval_pattern(tool_name, require_approval):
+            self._cost.record_tool_call(tool_name, turn=self._turn)
             event = AuditEvent.now(
                 run_id=self._run_id, agent=self._spec.agent.name, turn=self._turn,
                 event_type="tool_call", tool_name=tool_name, tool_input=tool_input,
@@ -292,6 +577,7 @@ class PolicyEnforcer:
                 approved = self._approval_handler(tool_name, tool_input, context)
 
             if approved:
+                self._cost.record_tool_call(tool_name, turn=self._turn)
                 event = AuditEvent.now(
                     run_id=self._run_id, agent=self._spec.agent.name, turn=self._turn,
                     event_type="tool_approved", tool_name=tool_name, tool_input=tool_input,
