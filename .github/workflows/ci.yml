@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,mcp]"
+
+      - name: Lint (ruff)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: ruff check cortex_protocol tests
+
+      - name: Test
+        run: pytest -q --cov=cortex_protocol --cov-report=term-missing
+
+      - name: Smoke test CLI
+        shell: bash
+        run: |
+          python -m cortex_protocol.cli --version
+          python -m cortex_protocol.cli list-targets
+          python -m cortex_protocol.cli mcp list --format json > /dev/null
+
+  npm-smoke:
+    name: npm wrapper smoke
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Validate package.json
+        run: node -e "require('./packaging/npm/package.json')"
+      - name: Launcher has executable bit
+        run: test -x packaging/npm/bin/cortex-protocol.js
+      - name: Static lint of launcher
+        run: node --check packaging/npm/bin/cortex-protocol.js
